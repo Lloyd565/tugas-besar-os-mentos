@@ -62,7 +62,7 @@ struct GlobalDescriptorTable {
  * @param address GDT address, GDT should already defined properly
  */
 struct GDTR {
-    uint16_t                     size;
+    uint16_t                         size;
     struct GlobalDescriptorTable *address;
 } __attribute__((packed));
 
