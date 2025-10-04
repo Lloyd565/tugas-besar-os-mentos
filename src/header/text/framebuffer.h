@@ -8,6 +8,8 @@
 #define FRAMEBUFFER_MEMORY_OFFSET ((uint8_t*) 0xB8000)
 #define CURSOR_PORT_CMD    0x03D4
 #define CURSOR_PORT_DATA   0x03D5
+#define FRAMEBUFFER_WIDTH 80
+#define FRAMEBUFFER_HEIGHT 25
 
 /**
  * Terminal framebuffer

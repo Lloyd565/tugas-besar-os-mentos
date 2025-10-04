@@ -7,8 +7,6 @@ struct {
 struct IDTGate _idt[IDT_MAX_ENTRY_COUNT];
 struct IDTR _idt_idtr;
 
-void *isr_stub_table[ISR_STUB_TABLE_LIMIT];
-
 void initialize_idt(void) {
     /* 
      * TODO: 
@@ -42,7 +40,7 @@ void set_interrupt_gate(
     uintptr_t handler = (uintptr_t) handler_address;
 
     // Target system 32-bit and flag this as valid interrupt gate
-    idt_int_gate->offset_low  = handler & 0xFFFF;          // Lower 16-bit
+    idt_int_gate->offset_low  = (uint16_t) handler & 0xFFFF;          // Lower 16-bit
     idt_int_gate->segment     = gdt_seg_selector;
     idt_int_gate->_reserved   = 0;
     // P = 1           (Present bit)
@@ -50,5 +48,5 @@ void set_interrupt_gate(
     // S = 0           (System segment)
     // GateType=1110   (32-bit interrupt gate)
     idt_int_gate->type        = 0x8E | ((privilege & 0x3) << 5);
-    idt_int_gate->offset_high = (handler >> 16) & 0xFFFF; // Upper 16-bit
+    idt_int_gate->offset_high = (uint16_t) (handler >> 16) & 0xFFFF; // Upper 16-bit
 }
