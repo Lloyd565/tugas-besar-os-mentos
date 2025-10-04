@@ -14,7 +14,6 @@
 
 // Interrupt Handler / ISR stub for reducing code duplication, this array can be iterated in initialize_idt()
 extern void *isr_stub_table[ISR_STUB_TABLE_LIMIT];
-
 extern struct IDTR _idt_idtr;
 
 /**
@@ -33,8 +32,12 @@ extern struct IDTR _idt_idtr;
 struct IDTGate {
     // First 32-bit (Bit 0 to 31)
     uint16_t offset_low;
-
     // TODO : Implement
+    uint16_t segment;
+
+    uint8_t  _reserved;     //set to zero
+    uint8_t type;           // includes _r_bit_1, _r_bit_2, gate_32, _r_bit_3
+    uint16_t offset_high;   //to handle 16..31 bit of offset
 } __attribute__((packed));
 
 /**
@@ -45,6 +48,11 @@ struct IDTGate {
  */
 // TODO : Implement
 // ...
+struct interrupt_descriptor_table
+{
+    struct IDTGate table[IDT_MAX_ENTRY_COUNT];
+} __attribute__((packed));
+
 
 /**
  * IDTR, carrying information where's the IDT located and size.
@@ -54,7 +62,10 @@ struct IDTGate {
  */
 // TODO : Implement
 // ...
-
+struct IDTR {
+    uint16_t limit;
+    uint32_t base_address;
+} __attribute__((packed));
 
 
 /**
