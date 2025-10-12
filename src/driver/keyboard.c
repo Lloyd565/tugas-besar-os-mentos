@@ -23,10 +23,30 @@ const char keyboard_scancode_1_to_ascii_map[256] = {
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
 };
 
+const char keyboard_scancode_1_to_ascii_map_shifted[256] = {
+      0, 0x1B, '!', '@', '#', '$', '%', '^',  '&', '*', '(',  ')',  '_', '+', '\b', '\t',
+    'Q',  'W', 'E', 'R', 'T', 'Y', 'U', 'I',  'O', 'P', '{',  '}', '\n',   0,  'A',  'S',
+    'D',  'F', 'G', 'H', 'J', 'K', 'L', ':', '\"', '~',   0,  '|',  'Z', 'X',  'C',  'V',
+    'B',  'N', 'M', '<', '>', '?',   0, '*',    0, ' ',   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0, '-',    0,    0,   0,  '+',    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+      0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
+};
+
 static struct KeyboardDriverState keyboard_state = {
     .read_extended_mode = false,
     .keyboard_input_on = false,
     .keyboard_buffer = '\0',
+    .shift_pressed = false,
 };
 
 // Activate keyboard ISR / start listen keyboard & save to buffer
@@ -50,25 +70,54 @@ void get_keyboard_buffer(char *buf){
   }
 }
 
+bool is_shift_presseed(void) {
+    return keyboard_state.shift_pressed;
+}
+
 void keyboard_isr(void) {
     uint8_t scancode = in(KEYBOARD_DATA_PORT);
+    bool is_break = scancode & 0x80;
+    uint8_t key = scancode & 0x7F;
 
     if (keyboard_state.keyboard_input_on) {
         if (scancode == EXTENDED_SCANCODE_BYTE) {
             keyboard_state.read_extended_mode = true;
         } else {
             if (keyboard_state.read_extended_mode) {
-              //to be handled (buat yg extended)
+                // Handle arrow keys
+                if (!is_break) {
+                    switch (key) {
+                        case EXT_SCANCODE_UP:
+                            keyboard_state.keyboard_buffer = KEY_UP;
+                            break;
+                        case EXT_SCANCODE_DOWN:
+                            keyboard_state.keyboard_buffer = KEY_DOWN;
+                            break;
+                        case EXT_SCANCODE_LEFT:
+                            keyboard_state.keyboard_buffer = KEY_LEFT;
+                            break;
+                        case EXT_SCANCODE_RIGHT:
+                            keyboard_state.keyboard_buffer = KEY_RIGHT;
+                            break;
+                    }
+                }
                 keyboard_state.read_extended_mode = false;
             } else {
-                if (!(scancode & 0x80)) {
-                    char ascii_char = keyboard_scancode_1_to_ascii_map[scancode];
+                // Handle shift keys
+                if (key == SCANCODE_LSHIFT || key == SCANCODE_RSHIFT) {
+                    keyboard_state.shift_pressed = !is_break;
+                } else if (!is_break) {
+                    // Convert scancode to ASCII with shift consideration
+                    char ascii_char;
+                    if (keyboard_state.shift_pressed) {
+                        ascii_char = keyboard_scancode_1_to_ascii_map_shifted[key];
+                    } else {
+                        ascii_char = keyboard_scancode_1_to_ascii_map[key];
+                    }
+                    
                     if (ascii_char != '\0') {
                         keyboard_state.keyboard_buffer = ascii_char;
                     }
-                } else {
-                    // break
-                    // Def: ga diproses
                 }
             }
         }

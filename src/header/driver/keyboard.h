@@ -10,9 +10,17 @@
 #define EXT_SCANCODE_DOWN      0x50
 #define EXT_SCANCODE_LEFT      0x4B
 #define EXT_SCANCODE_RIGHT     0x4D
+#define SCANCODE_LSHIFT       0x2A
+#define SCANCODE_RSHIFT       0x36
 
 #define KEYBOARD_DATA_PORT     0x60
 #define EXTENDED_SCANCODE_BYTE 0xE0
+
+// Special key codes for arrow keys 
+#define KEY_UP    128
+#define KEY_DOWN  129
+#define KEY_LEFT  130
+#define KEY_RIGHT 131
 
 /**
  * keyboard_scancode_1_to_ascii_map[256], Convert scancode values that correspond to ASCII printables
@@ -33,6 +41,7 @@ struct KeyboardDriverState {
     bool read_extended_mode;
     bool keyboard_input_on;
     char keyboard_buffer;
+    bool shift_pressed;
 } __attribute((packed));
 
 
@@ -40,6 +49,7 @@ struct KeyboardDriverState {
 
 
 /* -- Driver Interfaces -- */
+
 
 // Activate keyboard ISR / start listen keyboard & save to buffer
 void keyboard_state_activate(void);
@@ -50,6 +60,8 @@ void keyboard_state_deactivate(void);
 // Get keyboard buffer value and flush the buffer - @param buf Pointer to char buffer
 void get_keyboard_buffer(char *buf);
 
+// Check if shift key is pressed
+bool is_shift_presseed(void);
 /* -- Keyboard Interrupt Service Routine -- */
 
 /**
