@@ -7,6 +7,7 @@
 #include "header/cpu/interrupt/idt.h"
 #include "header/driver/keyboard.h"
 #include "header/driver/disk.h"
+#include "header/filesystem/ext2.h"
 
 
 void kernel_setup(void) {
@@ -17,6 +18,11 @@ void kernel_setup(void) {
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
     
+    framebuffer_write_string(1, 0, "CALL init ext2...",0xA, 0x0);
+    initialize_filesystem_ext2();
+    framebuffer_write_string(2, 0, "RET  init ext2.",0xA,0x0);
+
+
     int row = 0, col = 0;
     keyboard_state_activate();
     while (true) {

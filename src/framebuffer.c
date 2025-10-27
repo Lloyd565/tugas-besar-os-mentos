@@ -18,6 +18,18 @@ void framebuffer_set_cursor(uint8_t r, uint8_t c) {
     out(CURSOR_PORT_DATA, (uint8_t) ((pos >> 8) & 0XFF));
 }
 
+void framebuffer_write_string(uint8_t row, uint8_t col, const char *str, uint8_t fg, uint8_t bg) {
+    while (*str) {
+        framebuffer_write(row, col, *str, fg, bg);
+        col++;
+        if (col >= FRAMEBUFFER_WIDTH) {
+            col = 0;
+            row++;
+        }
+        str++;
+    }
+}
+
 void framebuffer_write(uint8_t row, uint8_t col, char c, uint8_t fg, uint8_t bg) {
     // TODO : Implement
     uint16_t attribute = (bg << 4) | (fg & 0x0F);
@@ -25,6 +37,7 @@ void framebuffer_write(uint8_t row, uint8_t col, char c, uint8_t fg, uint8_t bg)
     where = (volatile uint16_t *)0xB8000 + (row * FRAMEBUFFER_WIDTH + col);
     *where = c | (attribute << 8);
 }
+
 
 void framebuffer_clear(void) {
     // TODO : Implement

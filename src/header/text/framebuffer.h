@@ -37,6 +37,10 @@ void framebuffer_write(uint8_t row, uint8_t col, char c, uint8_t fg, uint8_t bg)
  * @param r row
  * @param c column
 */
+
+
+void framebuffer_write_string(uint8_t row, uint8_t col, const char *str, uint8_t fg, uint8_t bg);
+
 void framebuffer_set_cursor(uint8_t r, uint8_t c);
 
 /**
