@@ -186,7 +186,7 @@ void create_ext2(void) {
     write_blocks(&superblock, SUPERBLOCK_BLOCK, 1);
     write_blocks(&BGDT, BGDT_BLOCK, 1);
 
-\
+
     struct BlockBuffer bitmap;
     memset(&bitmap, 0, sizeof(bitmap));
 
