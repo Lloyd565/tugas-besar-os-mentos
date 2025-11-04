@@ -403,4 +403,14 @@ void allocate_node_blocks(void *ptr, struct EXT2Inode *node, uint32_t prefered_b
  */
 void sync_node(struct EXT2Inode *node, uint32_t inode);
 
+bool is_directory_empty(uint32_t inode_num);
+int8_t read_directory(struct EXT2DriverRequest *prequest);
+void read_inode(uint32_t inode_num, struct EXT2Inode *inode);
+uint32_t allocate_node(void);
+// void allocate_node_blocks(void *ptr, struct EXT2Inode *node, uint32_t prefered_bgd);
+void write_pointer_block(uint32_t block, uint32_t *pointers);
+uint32_t allocate_block(void);
+void write_inode(uint32_t inode_idx, struct EXT2Inode *inode);
+
+
 #endif

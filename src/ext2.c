@@ -309,30 +309,6 @@ void initialize_filesystem_ext2(void) {
  * @param inode of a directory table
  * @return true if first_child_entry->inode = 0
  */
-bool is_directory_empty(uint32_t inode_block_index) {
-    struct BlockBuffer block;
-    read_blocks(&block, inode_block_index, 1);
-
-    uint32_t offset = 0;
-    while (offset < BLOCK_SIZE) {
-        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(block.buf + offset);
-        char *name_ptr = ((char *)entry) + sizeof(struct EXT2DirectoryEntry);
-
-        // Lewati entry kosong
-        if (entry->inode == 0) break;
-
-        // Lewati "." dan ".."
-        if (!(entry->name_len == 1 && memcmp(name_ptr, ".", 1) == 0) &&
-            !(entry->name_len == 2 && memcmp(name_ptr, "..", 2) == 0)) {
-            return false; // Ada entry lain
-        }
-
-        offset += entry->rec_len;
-    }
-
-    // Hanya "." dan ".."
-    return true;
-}
 
 /* =============================== CRUD FUNC ======================================== */
 
@@ -347,6 +323,7 @@ int8_t read_directory(struct EXT2DriverRequest *request) {
     if (!(parent_inode.i_mode & EXT2_S_IFDIR)) {
         return -1; // Parent is not a directory
     }
+
     // Inisialisasi buffer dan variabel
     uint8_t* buffer = (uint8_t*)request->buf;
     uint32_t buffer_offset = 0;
@@ -356,8 +333,7 @@ int8_t read_directory(struct EXT2DriverRequest *request) {
     uint32_t entries_found = 0;
     uint32_t real_entries = 0; // Menghitung entri nyata (bukan . atau ..)
 
-
-    //Membaca direct blocks (0-11)
+    // Membaca direct blocks (0-11)
     for (int i = 0; i < 12 && parent_inode.i_block[i] != 0; i++) {
         read_blocks(block, parent_inode.i_block[i], 1);
         uint32_t offset = 0;
@@ -378,25 +354,29 @@ int8_t read_directory(struct EXT2DriverRequest *request) {
             memcpy(buffer + buffer_offset, entry, entry->rec_len);
 
             // Cek apakah ini adalah entri khusus (. atau ..)
-            char entry_name[256] = {0};
-            memcpy(entry_name, (uint8_t*)entry + sizeof(struct EXT2DirectoryEntry), entry->name_len);
-            entry_name[entry->name_len] = '\0';
-            
-            bool is_special = (strcmp(entry_name, ".") == 0) || (strcmp(entry_name, "..") == 0);
+            bool is_special = true;
+            if (entry->name_len == 1 && *((uint8_t*)entry + sizeof(struct EXT2DirectoryEntry)) == '.') {
+                is_special = true;
+            } else if (entry->name_len == 2 && *((uint8_t*)entry + sizeof(struct EXT2DirectoryEntry)) == '.' && *((uint8_t*)entry + sizeof(struct EXT2DirectoryEntry) + 1) == '.') {
+                is_special = true;
+            } else {
+                is_special = false;
+            }
+
             if (!is_special) {
                 real_entries++; // Hanya hitung entri non-khusus
             }
-            
-            buffer_offset += entry->rec_len;
-            entries_found++;
-            offset += entry->rec_len;
-        }
+             
+            buffer_offset += entry->rec_len; 
+            entries_found++; 
+            offset += entry->rec_len; 
+        } 
     }
 
-    
     // Return berdasarkan ada tidaknya entri nyata
     return entries_found > 0 ? 0 : 1; // 0 = has files, 1 = empty (only . and ..)
 }
+
 /**
  * @brief EXT2 read, read a file from file system
  * @param request All attribute will be used except is_dir for read, buffer_size will limit reading count
@@ -1096,87 +1076,91 @@ uint32_t deallocate_block(uint32_t *locations, uint32_t blocks, struct BlockBuff
  * 
  * @attention only implement until doubly indirect block, if you want to implement triply indirect block please increase the storage size to at least 256MB
  */
-void allocate_node_blocks(void *ptr, struct EXT2Inode *node, uint32_t prefered_bgd) {
-    if (!node) return;
-
-    uint32_t num_blocks = (node->i_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    uint32_t remaining = node->i_size;
-    uint8_t *data = (uint8_t *)ptr;
-    uint32_t written = 0;
-
-    /* Direct blocks (0..11) */
-    uint32_t n_direct = (num_blocks > 12) ? 12 : num_blocks;
-    for (uint32_t i = 0; i < n_direct; i++) {
-        uint32_t blk = allocate_block();
-        if (blk == 0) return; // tidak cukup ruang
-        node->i_block[i] = blk;
-        uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-        write_blocks(data, blk, 1);
-        data += to_write;
-        remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
-        written++;
-    }
-
-    /* Single indirect (index 12) */
-    if (written < num_blocks) {
-        uint32_t need = num_blocks - written;
-        uint32_t to_fill = (need > POINTERS_PER_BLOCK) ? POINTERS_PER_BLOCK : need;
-        uint32_t single = allocate_block();
-        if (single == 0) return;
-        node->i_block[12] = single;
-        uint32_t pointers[POINTERS_PER_BLOCK];
-        for (uint32_t i = 0; i < POINTERS_PER_BLOCK; i++) pointers[i] = 0;
-
-        for (uint32_t i = 0; i < to_fill; i++) {
-            uint32_t blk = allocate_block();
-            if (blk == 0) return;
-            pointers[i] = blk;
-            uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-            write_blocks(data, blk, 1);
-            data += to_write;
-            remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
-            written++;
-        }
-        write_pointer_block(single, pointers);
-    }
-
-    /* Double indirect (index 13) */
-    if (written < num_blocks) {
-        uint32_t blocks_left = num_blocks - written;
-        uint32_t doubly = allocate_block();
-        if (doubly == 0) return;
-        node->i_block[13] = doubly;
-        uint32_t first_level[POINTERS_PER_BLOCK];
-        for (uint32_t i = 0; i < POINTERS_PER_BLOCK; i++) first_level[i] = 0;
-
-        for (uint32_t i = 0; i < POINTERS_PER_BLOCK && blocks_left > 0; i++) {
-            uint32_t indirect = allocate_block();
-            if (indirect == 0) return;
-            first_level[i] = indirect;
-            uint32_t second_level[POINTERS_PER_BLOCK];
-            for (uint32_t j = 0; j < POINTERS_PER_BLOCK; j++) second_level[j] = 0;
-
-            for (uint32_t j = 0; j < POINTERS_PER_BLOCK && blocks_left > 0; j++) {
-                uint32_t data_blk = allocate_block();
-                if (data_blk == 0) return;
-                second_level[j] = data_blk;
-                uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-                write_blocks(data, data_blk, 1);
-                data += to_write;
-                remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
-                blocks_left--;
-                written++;
-            }
-            write_pointer_block(indirect, second_level);
-        }
-        write_pointer_block(doubly, first_level);
-    }
-
-    /* Triply indirect not implemented here (comment in header) */
-
-    /* Update i_blocks (count of 512-byte sectors? here count blocks as BLOCK_SIZE units) */
-    node->i_blocks = written; // simple block count; adjust if you count 512-byte sectors
+void write_pointer_block(uint32_t block, uint32_t *pointers) {
+    write_blocks(pointers, block, 1);
 }
+
+// void allocate_node_blocks(void *ptr, struct EXT2Inode *node, uint32_t prefered_bgd) {
+//     if (!node) return;
+
+//     uint32_t num_blocks = (node->i_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+//     uint32_t remaining = node->i_size;
+//     uint8_t *data = (uint8_t *)ptr;
+//     uint32_t written = 0;
+
+//     /* Direct blocks (0..11) */
+//     uint32_t n_direct = (num_blocks > 12) ? 12 : num_blocks;
+//     for (uint32_t i = 0; i < n_direct; i++) {
+//         uint32_t blk = allocate_block();
+//         if (blk == 0) return; // tidak cukup ruang
+//         node->i_block[i] = blk;
+//         uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
+//         write_blocks(data, blk, 1);
+//         data += to_write;
+//         remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
+//         written++;
+//     }
+
+//     /* Single indirect (index 12) */
+//     if (written < num_blocks) {
+//         uint32_t need = num_blocks - written;
+//         uint32_t to_fill = (need > POINTERS_PER_BLOCK) ? POINTERS_PER_BLOCK : need;
+//         uint32_t single = allocate_block();
+//         if (single == 0) return;
+//         node->i_block[12] = single;
+//         uint32_t pointers[POINTERS_PER_BLOCK];
+//         for (uint32_t i = 0; i < POINTERS_PER_BLOCK; i++) pointers[i] = 0;
+
+//         for (uint32_t i = 0; i < to_fill; i++) {
+//             uint32_t blk = allocate_block();
+//             if (blk == 0) return;
+//             pointers[i] = blk;
+//             uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
+//             write_blocks(data, blk, 1);
+//             data += to_write;
+//             remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
+//             written++;
+//         }
+//         write_pointer_block(single, pointers);
+//     }
+
+//     /* Double indirect (index 13) */
+//     if (written < num_blocks) {
+//         uint32_t blocks_left = num_blocks - written;
+//         uint32_t doubly = allocate_block();
+//         if (doubly == 0) return;
+//         node->i_block[13] = doubly;
+//         uint32_t first_level[POINTERS_PER_BLOCK];
+//         for (uint32_t i = 0; i < POINTERS_PER_BLOCK; i++) first_level[i] = 0;
+
+//         for (uint32_t i = 0; i < POINTERS_PER_BLOCK && blocks_left > 0; i++) {
+//             uint32_t indirect = allocate_block();
+//             if (indirect == 0) return;
+//             first_level[i] = indirect;
+//             uint32_t second_level[POINTERS_PER_BLOCK];
+//             for (uint32_t j = 0; j < POINTERS_PER_BLOCK; j++) second_level[j] = 0;
+
+//             for (uint32_t j = 0; j < POINTERS_PER_BLOCK && blocks_left > 0; j++) {
+//                 uint32_t data_blk = allocate_block();
+//                 if (data_blk == 0) return;
+//                 second_level[j] = data_blk;
+//                 uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
+//                 write_blocks(data, data_blk, 1);
+//                 data += to_write;
+//                 remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
+//                 blocks_left--;
+//                 written++;
+//             }
+//             write_pointer_block(indirect, second_level);
+//         }
+//         write_pointer_block(doubly, first_level);
+//     }
+
+//     /* Triply indirect not implemented here (comment in header) */
+
+//     /* Update i_blocks (count of 512-byte sectors? here count blocks as BLOCK_SIZE units) */
+//     node->i_blocks = written; // simple block count; adjust if you count 512-byte sectors
+// }
 /**
  * @brief update the node to the disk
  * @param node pointer of node
@@ -1194,4 +1178,36 @@ void sync_node(struct EXT2Inode *node, uint32_t inode) {
 
     memcpy(blk.buf + inode_offset * INODE_SIZE, node, sizeof(struct EXT2Inode));
     write_blocks(&blk, INODE_TABLE_BLOCK + block_offset, 1);
+}
+
+
+void write_inode(uint32_t inode_idx, struct EXT2Inode *inode) {
+    uint32_t inodes_per_block = BLOCK_SIZE / INODE_SIZE;
+    uint32_t block_offset = inode_idx / inodes_per_block;
+    uint32_t inode_offset = inode_idx % inodes_per_block;
+
+    struct BlockBuffer block_buf = {0};
+    read_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
+
+    memcpy(
+        (void *)(block_buf.buf + inode_offset * INODE_SIZE),
+        (void *)inode,
+        sizeof(struct EXT2Inode)
+    );
+
+    write_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
+}
+uint32_t allocate_block(void) {
+    uint8_t bitmap[BLOCK_SIZE];
+    read_blocks(bitmap, 3, 1);
+    for (uint32_t i = 0; i < superblock.s_blocks_count; i++) {
+        uint32_t byte = i / 8;
+        uint8_t bit = 1 << (i % 8);
+        if (!(bitmap[byte] & bit)) {
+            bitmap[byte] |= bit;
+            write_blocks(bitmap, 3, 1);
+            return i;
+        }
+    }
+    return 0; // Tidak ada block free
 }
