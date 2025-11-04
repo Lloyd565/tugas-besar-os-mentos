@@ -79,6 +79,13 @@ iso: kernel
 		iso
 	@rm -rf $(OUTPUT_FOLDER)/iso/
 
+inserter:
+	@$(CC) -Wno-builtin-declaration-mismatch -g -I$(SOURCE_FOLDER) \
+		$(SOURCE_FOLDER)/stdlib/string.c \
+		$(SOURCE_FOLDER)/filesystem/ext2.c \
+		$(SOURCE_FOLDER)/external/external-inserter.c \
+		-o $(OUTPUT_FOLDER)/inserter
+
 clean:
 	@echo "Cleaning up..."
 	@rm -rf $(OUTPUT_FOLDER)/*
