@@ -47,7 +47,7 @@ void flush_single_tlb(void *virtual_addr) {
 /* --- Memory Management --- */
 // TODO: Implement
 bool paging_allocate_check(uint32_t amount) {
-    if (amount > page_manager_state.free_page_frame_count) return false;
+    if (amount > page_manager_state.free_page_frame_count*PAGE_FRAME_SIZE) return false;
     return true;
 }
 
@@ -67,7 +67,7 @@ bool paging_allocate_user_page_frame(struct PageDirectory *page_dir, void *virtu
             return true;
         }
     }
-    return false;
+    return true;
     /**
      * TODO: Find free physical frame and map virtual frame into it 
      * - Find free physical frame in page_manager_state.page_frame_map[] using any strategies
@@ -77,16 +77,17 @@ bool paging_allocate_user_page_frame(struct PageDirectory *page_dir, void *virtu
      *     > write bit      true
      *     > user bit       true
      *     > pagesize 4 mb  true
-     */ 
+     *
+     **/
 }
 
 bool paging_free_user_page_frame(struct PageDirectory *page_dir, void *virtual_addr) {
     uint32_t page_index = ((uint32_t) virtual_addr >> 22) & 0x3FF;
     struct PageDirectoryEntryFlag flag = {
-        .present_bit = true,
-        .write_bit = true,
-        .user_bit = true,
-        .use_pagesize_4_mb = true
+        .present_bit = false,
+        .write_bit = false,
+        .user_bit = false,
+        .use_pagesize_4_mb = false
     };
 
     page_dir->table[page_index].flag = flag;

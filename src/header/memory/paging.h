@@ -31,6 +31,7 @@ struct PageDirectoryEntryFlag {
     uint8_t write_bit          : 1;
     uint8_t user_bit           : 1;
     uint8_t write_through      : 1;
+    uint8_t access_bit         : 1;
     uint8_t cache              : 1;
     uint8_t dirty_bit          : 1;
     uint8_t use_pagesize_4_mb  : 1;
