@@ -44,6 +44,7 @@ kernel:
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/driver/keyboard.c -o $(OUTPUT_FOLDER)/keyboard.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/ext2.c -o $(OUTPUT_FOLDER)/ext2.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/disk.c -o $(OUTPUT_FOLDER)/disk.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/paging.c -o $(OUTPUT_FOLDER)/paging.o
 	@echo "Linking object files and generating ELF32 kernel..."
 	@$(LD) $(LFLAGS) \
 		$(OUTPUT_FOLDER)/kernel-entrypoint.o \
@@ -58,6 +59,7 @@ kernel:
 		$(OUTPUT_FOLDER)/keyboard.o \
 		$(OUTPUT_FOLDER)/ext2.o \
 		$(OUTPUT_FOLDER)/disk.o \
+		$(OUTPUT_FOLDER)/paging.o \
 		-o $(OUTPUT_FOLDER)/kernel
 
 iso: kernel
