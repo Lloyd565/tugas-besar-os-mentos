@@ -2,7 +2,7 @@
 ASM     = nasm
 CC      = gcc
 LD      = ld
-
+LIN 	= ld
 # Directory
 SOURCE_FOLDER = src
 OUTPUT_FOLDER = bin
