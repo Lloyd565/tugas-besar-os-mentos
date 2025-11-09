@@ -27,7 +27,7 @@
 #define INODE_TABLE_BLOCK 5 // Inode table mulai dari block ke-5
 #define INODE_TABLE_BLOCK_COUNT 16 // misal inode table pakai 16 block
 #define DATA_BLOCK_START (INODE_TABLE_BLOCK + INODE_TABLE_BLOCK_COUNT)
-
+#define EXT2_S_IFDIR 0x4000 //konstanta bit flag yang menunjukkan inode ini adalah direktori
 
 
 /**
@@ -221,6 +221,7 @@ struct EXT2DirectoryEntry
      * 8bit unsigned value used to indicate file type.
      */
     uint8_t file_type;
+    char     name[];
 
 }__attribute__((packed));
 

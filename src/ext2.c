@@ -1,9 +1,11 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include <stdio.h>
 #include <stddef.h>
 #include "header/stdlib/string.h"
 #include "header/filesystem/ext2.h"
-
+#define EXT2_INODE_SIZE 128
 
 #define POINTERS_PER_BLOCK (BLOCK_SIZE / sizeof(uint32_t))
 static struct EXT2Superblock superblock;
@@ -23,6 +25,57 @@ const uint8_t fs_signature[BLOCK_SIZE] = {
 /**
  *  REGULAR function
  */
+
+ 
+void debug_print_dirblock(uint32_t block_no); // forward declaration
+
+void debug_print_inode(uint32_t inode_no) {
+    struct EXT2Superblock super;
+    struct EXT2BlockGroupDescriptorTable bgdt;
+    uint8_t buf[BLOCK_SIZE];
+
+    // Baca superblock & BGDT dari storage
+    read_blocks(&super, SUPERBLOCK_BLOCK, 1);
+    read_blocks(&bgdt, BGDT_BLOCK, 1);
+
+    uint32_t inodenum = inode_no - 1;
+    uint32_t inodes_per_block = BLOCK_SIZE / EXT2_INODE_SIZE;
+    uint32_t index_block = inodenum / inodes_per_block;
+    uint32_t index_offset = inodenum % inodes_per_block;
+    uint32_t inode_table_block = bgdt.table[0].bg_inode_table;
+
+    // Baca blok inode table yang sesuai
+    read_blocks(buf, inode_table_block + index_block, 1);
+
+    struct EXT2Inode inode;
+    memcpy(&inode, buf + index_offset * EXT2_INODE_SIZE, sizeof(inode));
+
+    printf("[DEBUG-INODE] ino=%u i_mode=0x%X i_size=%u i_blocks=%u i_block[0]=%u\n",
+           inode_no, inode.i_mode, (unsigned)inode.i_size, (unsigned)inode.i_blocks,
+           (unsigned)inode.i_block[0]);
+}
+
+
+void debug_print_dirblock(uint32_t block_no) {
+    uint8_t buf[BLOCK_SIZE];
+    read_blocks(buf, block_no, 1);
+
+    uint32_t offset = 0;
+    printf("[DEBUG-DIRBLOCK] block=%u contents:\n", block_no);
+    while (offset < BLOCK_SIZE) {
+        struct EXT2DirectoryEntry *d = (struct EXT2DirectoryEntry *)(buf + offset);
+        if (d->inode == 0) break; // kosong
+        char name[256] = {0};
+        int n = d->name_len;
+        if (n > 255) n = 255;
+        memcpy(name, (uint8_t*)d + sizeof(struct EXT2DirectoryEntry), n);
+        name[n] = '\0';
+        printf("  entry: inode=%u rec_len=%u name_len=%u type=%u name='%s'\n",
+               d->inode, d->rec_len, d->name_len, d->file_type, name);
+        if (d->rec_len == 0) break;
+        offset += d->rec_len;
+    }
+}
 
 /**
  * get the name of the entry
@@ -197,15 +250,16 @@ bool is_directory_empty(uint32_t inode_num) {
 /**
  * @brief create a new EXT2 filesystem. Will write fs_signature into boot sector,
  * initialize super block, bgd table, block and inode bitmap, and create root directory
- */
-void create_ext2(void) {
-    struct BlockBuffer buffer;
-    memset(&buffer, 0, sizeof(buffer)); // isi semua buffer dengan 0
+ */void create_ext2(void) {
+    printf("[DEBUG] create_ext2() CALLED!\n");
 
-    // Tulis filesystem signature di boot sector (tanda storage sudah diformat EXT2)
+    // ===== 1️⃣ Tulis filesystem signature =====
+    struct BlockBuffer buffer;
+    memset(&buffer, 0, sizeof(buffer));
     memcpy(buffer.buf, fs_signature, BLOCK_SIZE);
     write_blocks(&buffer, BOOT_SECTOR, 1);
 
+    // ===== 2️⃣ Setup BGDT =====
     struct EXT2BlockGroupDescriptorTable BGDT;
     memset(&BGDT, 0, sizeof(BGDT));
     BGDT.table[0].bg_block_bitmap  = BLOCK_BITMAP_BLOCK;
@@ -215,73 +269,86 @@ void create_ext2(void) {
     BGDT.table[0].bg_free_inodes_count = INODES_TOTAL - 1; // root inode terpakai
     BGDT.table[0].bg_used_dirs_count   = 1;
 
+    // ===== 3️⃣ Setup superblock =====
     memset(&superblock, 0, sizeof(superblock));
-    superblock.s_inodes_count        = INODES_TOTAL;
-    superblock.s_blocks_count        = BLOCKS_TOTAL;
-    superblock.s_r_blocks_count      = 0; // Tidak ada reserved block
-    superblock.s_free_blocks_count   = BGDT.table[0].bg_free_blocks_count;
-    superblock.s_free_inodes_count   = BGDT.table[0].bg_free_inodes_count;
-    superblock.s_first_data_block    = 1;  // Superblock ada di block 1
-    superblock.s_first_ino           = 2;  // Root inode
-    superblock.s_blocks_per_group    = BLOCKS_PER_GROUP;
-    superblock.s_frags_per_group     = BLOCKS_PER_GROUP;
-    superblock.s_inodes_per_group    = INODES_PER_GROUP;
-    superblock.s_magic               = EXT2_SUPER_MAGIC;
-    superblock.s_prealloc_blocks     = 0;
-    superblock.s_prealloc_dir_blocks = 0;
+    superblock.s_inodes_count      = INODES_TOTAL;
+    superblock.s_blocks_count      = BLOCKS_TOTAL;
+    superblock.s_r_blocks_count    = 0;
+    superblock.s_free_blocks_count = BGDT.table[0].bg_free_blocks_count;
+    superblock.s_free_inodes_count = BGDT.table[0].bg_free_inodes_count;
+    superblock.s_first_data_block  = 1;
+    superblock.s_first_ino         = 2;
+    superblock.s_blocks_per_group  = BLOCKS_PER_GROUP;
+    superblock.s_frags_per_group   = BLOCKS_PER_GROUP;
+    superblock.s_inodes_per_group  = INODES_PER_GROUP;
+    superblock.s_magic             = EXT2_SUPER_MAGIC;
 
     // Tulis superblock & BGDT ke disk
     write_blocks(&superblock, SUPERBLOCK_BLOCK, 1);
     write_blocks(&BGDT, BGDT_BLOCK, 1);
 
-
+    // ===== 4️⃣ Setup block & inode bitmap =====
     struct BlockBuffer bitmap;
     memset(&bitmap, 0, sizeof(bitmap));
 
-    // tandai blok sistem (0..DATA_BLOCK_START-1) sudah terpakai
+    // tandai block sistem terpakai
     for (uint32_t i = 0; i < DATA_BLOCK_START; i++)
         bitmap.buf[i / 8] |= (1 << (i % 8));
-
     write_blocks(&bitmap, BLOCK_BITMAP_BLOCK, 1);
 
+    // inode bitmap: root inode terpakai
     memset(&bitmap, 0, sizeof(bitmap));
-    bitmap.buf[0] |= (1 << 1); // inode #2 (root dir) terpakai
+    bitmap.buf[0] |= (1 << 1); // inode #2
     write_blocks(&bitmap, INODE_BITMAP_BLOCK, 1);
 
-
+    // ===== 5️⃣ Setup inode table =====
     struct EXT2InodeTable inode_table;
     memset(&inode_table, 0, sizeof(inode_table));
 
     // inode #2 = root directory
-    inode_table.table[1].i_mode   = EXT2_FT_DIR;
-    inode_table.table[1].i_size   = BLOCK_SIZE;
-    inode_table.table[1].i_blocks = 1;
-    inode_table.table[1].i_block[0] = DATA_BLOCK_START;
+    struct EXT2Inode *root_inode = &inode_table.table[1]; // inode #2
+    root_inode->i_mode   = EXT2_S_IFDIR;
+    root_inode->i_size   = BLOCK_SIZE;
+    root_inode->i_blocks = 1;
+    root_inode->i_block[0] = DATA_BLOCK_START;
 
     write_blocks(&inode_table, INODE_TABLE_BLOCK, INODE_TABLE_BLOCK_COUNT);
 
-
+    // ===== 6️⃣ Setup root directory =====
     struct BlockBuffer root_dir;
     memset(&root_dir, 0, sizeof(root_dir));
 
-    // Entry untuk "."
-    struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)root_dir.buf;
-    dot->inode = 2;
-    dot->name_len = 1;
-    dot->file_type = EXT2_FT_DIR;
-    dot->rec_len = 12; // ukuran minimum dan align ke 4 byte
-    memcpy(((uint8_t *)dot) + sizeof(struct EXT2DirectoryEntry), ".", 1);
+    uint8_t *ptr = root_dir.buf;
 
-    // Entry untuk ".."
-    struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)((uint8_t *)dot + dot->rec_len);
-    dotdot->inode = 2; // parent = self (root)
+    // Helper macro: buat entry
+    #define ADD_ENTRY(_inode, _name, _type) do {                       \
+        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)ptr; \
+        entry->inode = (_inode);                                        \
+        entry->name_len = strlen(_name);                                 \
+        entry->file_type = (_type);                                      \
+        entry->rec_len = ((sizeof(struct EXT2DirectoryEntry) + entry->name_len + 3) / 4) * 4; \
+        memcpy(ptr + sizeof(struct EXT2DirectoryEntry), (_name), entry->name_len); \
+        ptr += entry->rec_len;                                           \
+    } while(0)
+
+    // "." entry
+    ADD_ENTRY(2, ".", EXT2_FT_DIR);
+
+    // ".." entry (sisa block)
+    uint32_t used = ptr - root_dir.buf;
+    struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)ptr;
+    dotdot->inode = 2;
     dotdot->name_len = 2;
     dotdot->file_type = EXT2_FT_DIR;
-    dotdot->rec_len = BLOCK_SIZE - dot->rec_len; // sisa block
-    memcpy(((uint8_t *)dotdot) + sizeof(struct EXT2DirectoryEntry), "..", 2);
+    dotdot->rec_len = BLOCK_SIZE - used; // sisa block
+    memcpy(ptr + sizeof(struct EXT2DirectoryEntry), "..", 2);
 
-    // Tulis root directory ke data block
+    #undef ADD_ENTRY
+
+    // Tulis root directory ke disk
     write_blocks(&root_dir, DATA_BLOCK_START, 1);
+
+    printf("[DEBUG] create_ext2() FINISHED creating root directory\n");
 }
 
 /**
@@ -289,20 +356,52 @@ void create_ext2(void) {
  * Else, read and cache super block (located at block 1) and bgd table (located at block 2) into state
  */
 void initialize_filesystem_ext2(void) {
-    if (is_empty_storage()) {
-        create_ext2();
-    } else {
-        struct EXT2Superblock superblock;
-        struct EXT2BlockGroupDescriptorTable bgdt;
+    struct EXT2Superblock superblock;
+    struct EXT2BlockGroupDescriptorTable bgdt;
 
-        read_blocks(&superblock, SUPERBLOCK_BLOCK, 1);
-        read_blocks(&bgdt, BGDT_BLOCK, 1);
+    uint8_t sb_buf[BLOCK_SIZE];
+    uint8_t bgdt_buf[BLOCK_SIZE];
+
+
+    if (is_empty_storage()) {
+        printf("[INFO] Storage empty — creating ext2 (create_ext2)...\n");
+        create_ext2();
+
+        /* after creating, read back superblock/bgdt from image */
+        read_blocks(sb_buf, SUPERBLOCK_BLOCK, 1);
+        memcpy(&superblock, sb_buf, sizeof(superblock));
+
+        read_blocks(bgdt_buf, BGDT_BLOCK, 1);
+        memcpy(&bgdt, bgdt_buf, sizeof(bgdt));
+    } else {
+        /* read raw blocks first into block-sized buffers */
+        read_blocks(sb_buf, SUPERBLOCK_BLOCK, 1);
+        read_blocks(bgdt_buf, BGDT_BLOCK, 1);
+
+        /* copy only the struct-sized portion to avoid overflow */
+        memcpy(&superblock, sb_buf, sizeof(superblock));
+        memcpy(&bgdt, bgdt_buf, sizeof(bgdt));
 
         if (superblock.s_magic != EXT2_SUPER_MAGIC) {
-            // invalid, tapi gak print apa-apa
+            printf("[ERROR] Invalid filesystem magic: 0x%X (expected 0x%X)\n",
+                   superblock.s_magic, EXT2_SUPER_MAGIC);
+            /* If you want to fallback to create_ext2(), do it here */
+            return;
         }
     }
+    printf("[EXT2 DEBUG] s_magic = 0x%X\n", superblock.s_magic);
+    printf("[EXT2 DEBUG] s_inodes_count = %u\n", (unsigned)superblock.s_inodes_count);
+    printf("[EXT2 DEBUG] s_blocks_count = %u\n", (unsigned)superblock.s_blocks_count);
+
+    /* Debug: print values that are safe to access */
+    printf("[DEBUG] total_inodes = %u\n", (unsigned)superblock.s_inodes_count);
+    printf("[EXT2 DEBUG] will print root inode & root dir block\n");
+    debug_print_inode(2);
+    debug_print_dirblock(DATA_BLOCK_START);
+
 }
+
+
 
 /**
  * @brief check whether a directory table has children or not
@@ -388,10 +487,16 @@ int8_t read_directory(struct EXT2DriverRequest *request) {
  * read inode from inode number
  */
 void read_inode(uint32_t inode_idx, struct EXT2Inode *inode_out) {
+    if (inode_idx == 0) {
+        printf("[ERROR] read_inode(): invalid inode index 0\n");
+        memset(inode_out, 0, sizeof(struct EXT2Inode));
+        return;
+    }
+
     // inisialisasi lokasi inode
     uint32_t inodes_per_block = BLOCK_SIZE / INODE_SIZE;
-    uint32_t block_offset = inode_idx / inodes_per_block;
-    uint32_t inode_offset = inode_idx % inodes_per_block;
+    uint32_t block_offset = (inode_idx - 1) / inodes_per_block;
+    uint32_t inode_offset = (inode_idx - 1) % inodes_per_block;
 
     struct BlockBuffer block_buf = {0};
     read_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
@@ -402,6 +507,7 @@ void read_inode(uint32_t inode_idx, struct EXT2Inode *inode_out) {
         sizeof(struct EXT2Inode)
     );
 }
+
 
 int8_t read(struct EXT2DriverRequest request) {
     struct EXT2Inode parent_inode;
@@ -966,6 +1072,54 @@ uint32_t allocate_node(void) {
     }
     return 0; // No free inodes
 }
+/**
+ * @brief Allocate a free data block from block bitmap
+ * @return nomor block yang dialokasikan (>= DATA_BLOCK_START), 
+ *         atau 0 jika tidak ada block kosong
+ */
+uint32_t allocate_block(void) {
+    struct BlockBuffer bitmap;
+    read_blocks(&bitmap, BLOCK_BITMAP_BLOCK, 1);
+
+    // total block = BLOCKS_TOTAL
+    for (uint32_t block_num = DATA_BLOCK_START; block_num < BLOCKS_TOTAL; block_num++) {
+        uint32_t byte_idx = block_num / 8;
+        uint8_t bit_mask = 1 << (block_num % 8);
+
+        if (!(bitmap.buf[byte_idx] & bit_mask)) {
+            // block kosong → tandai jadi terpakai
+            bitmap.buf[byte_idx] |= bit_mask;
+
+            // tulis bitmap ke storage
+            write_blocks(&bitmap, BLOCK_BITMAP_BLOCK, 1);
+
+            // kurangi jumlah block kosong di superblock & BGDT
+            if (superblock.s_free_blocks_count > 0)
+                superblock.s_free_blocks_count--;
+            if (bgd.bg_free_blocks_count > 0)
+                bgd.bg_free_blocks_count++;
+
+            // sinkronkan superblock & BGDT ke disk
+            struct BlockBuffer temp;
+            memset(&temp, 0, sizeof(temp));
+            memcpy(temp.buf, &superblock, sizeof(superblock));
+            write_blocks(&temp, SUPERBLOCK_BLOCK, 1);
+
+            memset(&temp, 0, sizeof(temp));
+            memcpy(temp.buf, &bgd, sizeof(bgd));
+            write_blocks(&temp, BGDT_BLOCK, 1);
+
+            // kosongkan isi block yang baru dialokasikan
+            struct BlockBuffer zero = {0};
+            write_blocks(&zero, block_num, 1);
+
+            return block_num;
+        }
+    }
+
+    // kalau semua block sudah terpakai
+    return 0;
+}
 
 /**
  * @brief deallocate node from the disk, will also deallocate its used blocks
@@ -1180,11 +1334,10 @@ void sync_node(struct EXT2Inode *node, uint32_t inode) {
     write_blocks(&blk, INODE_TABLE_BLOCK + block_offset, 1);
 }
 
-
 void write_inode(uint32_t inode_idx, struct EXT2Inode *inode) {
     uint32_t inodes_per_block = BLOCK_SIZE / INODE_SIZE;
-    uint32_t block_offset = inode_idx / inodes_per_block;
-    uint32_t inode_offset = inode_idx % inodes_per_block;
+    uint32_t block_offset = (inode_idx - 1) / inodes_per_block;
+    uint32_t inode_offset = (inode_idx - 1) % inodes_per_block;
 
     struct BlockBuffer block_buf = {0};
     read_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
@@ -1196,18 +1349,4 @@ void write_inode(uint32_t inode_idx, struct EXT2Inode *inode) {
     );
 
     write_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
-}
-uint32_t allocate_block(void) {
-    uint8_t bitmap[BLOCK_SIZE];
-    read_blocks(bitmap, 3, 1);
-    for (uint32_t i = 0; i < superblock.s_blocks_count; i++) {
-        uint32_t byte = i / 8;
-        uint8_t bit = 1 << (i % 8);
-        if (!(bitmap[byte] & bit)) {
-            bitmap[byte] |= bit;
-            write_blocks(bitmap, 3, 1);
-            return i;
-        }
-    }
-    return 0; // Tidak ada block free
 }

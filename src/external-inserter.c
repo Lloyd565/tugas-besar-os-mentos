@@ -29,94 +29,130 @@ void write_blocks(const void *ptr, uint32_t logical_block_address, uint8_t block
         );
     }
 }
-
 int main(int argc, char *argv[]) {
     if (argc < 4) {
         fprintf(stderr, "inserter: ./inserter <file to insert> <parent cluster index> <storage>\n");
-        exit(1);
+        return 1;
     }
 
-    // Read storage into memory, requiring 4 MB memory
-    image_storage = malloc(4*1024*1024);
-    file_buffer   = malloc(4*1024*1024);
-    FILE *fptr    = fopen(argv[3], "r");
-    fread(image_storage, 4*1024*1024, 1, fptr);
+    // Allocate big buffers on heap
+    image_storage = malloc(4 * 1024 * 1024);
+    file_buffer   = malloc(4 * 1024 * 1024);
+    uint8_t *read_buffer = malloc(4 * 1024 * 1024);
+    if (!image_storage || !file_buffer || !read_buffer) {
+        fprintf(stderr, "Error: cannot allocate required buffers\n");
+        free(image_storage); free(file_buffer); free(read_buffer);
+        return 1;
+    }
+
+    /* --- safe open and read storage image --- */
+    FILE *fptr = fopen(argv[3], "rb");
+    if (fptr == NULL) {
+        fprintf(stderr, "Error: cannot open storage image %s\n", argv[3]);
+        perror("fopen");
+        free(image_storage); free(file_buffer); free(read_buffer);
+        return 1;
+    }
+    size_t got = fread(image_storage, 1, 4 * 1024 * 1024, fptr);
+    if (got == 0) {
+        fprintf(stderr, "Warning: read 0 bytes from %s (got=%zu)\n", argv[3], got);
+    }
     fclose(fptr);
 
-    // Read target file, assuming file is less than 4 MiB
-    FILE *fptr_target = fopen(argv[1], "r");
-    size_t filesize   = 0;
-    if (fptr_target == NULL)
-        filesize = 0;
-    else {
-        fread(file_buffer, 4*1024*1024, 1, fptr_target);
-        fseek(fptr_target, 0, SEEK_END);
+    /* Read target file (binary) */
+    FILE *fptr_target = fopen(argv[1], "rb");
+    size_t filesize = 0;
+    if (fptr_target == NULL) {
+        fprintf(stderr, "Error: cannot open target file %s\n", argv[1]);
+        free(image_storage); free(file_buffer); free(read_buffer);
+        return 1;
+    } else {
+        if (fseek(fptr_target, 0, SEEK_END) != 0) {
+            perror("fseek");
+            fclose(fptr_target);
+            free(image_storage); free(file_buffer); free(read_buffer);
+            return 1;
+        }
         filesize = ftell(fptr_target);
+        rewind(fptr_target);
+        if (filesize > 0) {
+            size_t r = fread(file_buffer, 1, filesize, fptr_target);
+            if (r != (size_t)filesize) {
+                fprintf(stderr, "Warning: fread read %zu of %zu bytes\n", r, filesize);
+            }
+        }
         fclose(fptr_target);
     }
 
     printf("Filename : %s\n",  argv[1]);
-    printf("Filesize : %ld bytes\n", filesize);
+    printf("Filesize : %zu bytes\n", filesize);
 
     // EXT2 operations
     initialize_filesystem_ext2();
+
     char *name = argv[1];
     struct EXT2DriverRequest request;
     struct EXT2DriverRequest reqread;
-    uint8_t filename_length = strlen(name);
-    uint8_t read_buffer[4*1024*1024];    
+    size_t filename_length = strlen(name);
+
     bool is_replace = false;
     printf("Filename       : %s\n", name);
-    printf("Filename length: %d\n", filename_length);
+    printf("Filename length: %zu\n", filename_length);
 
+    /* prepare request (do NOT copy name into unknown memory) */
     request.buf = file_buffer;
-    request.buffer_size = filesize;
+    request.buffer_size = (uint32_t)filesize;
     request.name = name;
-    request.name_len = filename_length;
+    request.name_len = (uint8_t)filename_length;
     request.is_directory = false;
-    sscanf(argv[2], "%u", &request.parent_inode);
-    sscanf(argv[1], "%s", request.name);
+    if (sscanf(argv[2], "%u", &request.parent_inode) != 1) {
+        fprintf(stderr, "Error: invalid parent inode argument '%s'\n", argv[2]);
+        free(image_storage); free(file_buffer); free(read_buffer);
+        return 1;
+    }
 
+    /* read-check */
     reqread = request;
     reqread.buf = read_buffer;
     int retcode = read(reqread);
-    if (retcode == 0)
-    {
+    if (retcode == 0) {
         bool same = true;
-        for (uint32_t i = 0; i < filesize; i++)
-        {
-            if (read_buffer[i] != file_buffer[i])
-            {
-                printf("not same\n");
+        for (uint32_t i = 0; i < (uint32_t)filesize; i++) {
+            if (read_buffer[i] != file_buffer[i]) {
                 same = false;
                 break;
             }
         }
-        if (same)
-        {
-            printf("same\n");
-        }
+        if (same) puts("same");
+        else puts("not same");
     }
 
     retcode = write(&request);
-    if (retcode == 1 && is_replace)
-    {
-        retcode = delete (request);
+    if (retcode == 1 && is_replace) {
+        retcode = delete(request);
         retcode = write(&request);
     }
-    if (retcode == 0)
-        puts("Write success");
-    else if (retcode == 1)
-        puts("Error: File/folder name already exist");
-    else if (retcode == 2)
-        puts("Error: Invalid parent node index");
-    else
-        puts("Error: Unknown error");
 
-    // Write image in memory into original, overwrite them
-    fptr = fopen(argv[3], "w");
-    fwrite(image_storage, 4 * 1024 * 1024, 1, fptr);
+    if (retcode == 0) puts("Write success");
+    else if (retcode == 1) puts("Error: File/folder name already exist");
+    else if (retcode == 2) puts("Error: Invalid parent node index");
+    else printf("Error: Unknown error (%d)\n", retcode);
+
+    /* Write image in memory into original, overwrite them (binary mode) */
+    fptr = fopen(argv[3], "wb");
+    if (!fptr) {
+        fprintf(stderr, "Error: cannot open storage image for writing %s\n", argv[3]);
+        free(image_storage); free(file_buffer); free(read_buffer);
+        return 1;
+    }
+    size_t written = fwrite(image_storage, 1, 4 * 1024 * 1024, fptr);
+    if (written != 4 * 1024 * 1024) {
+        fprintf(stderr, "Warning: fwrite wrote %zu bytes (expected %d)\n", written, 4 * 1024 * 1024);
+    }
     fclose(fptr);
 
+    free(image_storage);
+    free(file_buffer);
+    free(read_buffer);
     return 0;
 }
