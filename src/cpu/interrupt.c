@@ -108,14 +108,14 @@ void syscall(struct InterruptFrame frame) {
         case 7: 
             keyboard_state_activate();
             break;
-        case 8:
-            move_text_cursor(
-                (uint8_t) frame.cpu.general.ebx, 
-                (uint8_t) frame.cpu.general.ecx
-            );
-            break;
-        case 9:
-            clear_screen();
-            break;
+        // case 8:
+        //     move_text_cursor(
+        //         (uint8_t) frame.cpu.general.ebx, 
+        //         (uint8_t) frame.cpu.general.ecx
+        //     );
+        //     break;
+        // case 9:
+        //     clear_screen();
+        //     break;
     }
 }

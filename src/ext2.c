@@ -1,6 +1,5 @@
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdio.h>
 #include <stddef.h>
 #include "header/stdlib/string.h"
 #include "header/filesystem/ext2.h"
@@ -48,10 +47,6 @@ void debug_print_inode(uint32_t inode_no) {
 
     struct EXT2Inode inode;
     memcpy(&inode, buf + index_offset * EXT2_INODE_SIZE, sizeof(inode));
-
-    printf("[DEBUG-INODE] ino=%u i_mode=0x%X i_size=%u i_blocks=%u i_block[0]=%u\n",
-           inode_no, inode.i_mode, (unsigned)inode.i_size, (unsigned)inode.i_blocks,
-           (unsigned)inode.i_block[0]);
 }
 
 
@@ -60,7 +55,6 @@ void debug_print_dirblock(uint32_t block_no) {
     read_blocks(buf, block_no, 1);
 
     uint32_t offset = 0;
-    printf("[DEBUG-DIRBLOCK] block=%u contents:\n", block_no);
     while (offset < BLOCK_SIZE) {
         struct EXT2DirectoryEntry *d = (struct EXT2DirectoryEntry *)(buf + offset);
         if (d->inode == 0) break; // kosong
@@ -69,8 +63,6 @@ void debug_print_dirblock(uint32_t block_no) {
         if (n > 255) n = 255;
         memcpy(name, (uint8_t*)d + sizeof(struct EXT2DirectoryEntry), n);
         name[n] = '\0';
-        printf("  entry: inode=%u rec_len=%u name_len=%u type=%u name='%s'\n",
-               d->inode, d->rec_len, d->name_len, d->file_type, name);
         if (d->rec_len == 0) break;
         offset += d->rec_len;
     }
@@ -250,7 +242,6 @@ bool is_directory_empty(uint32_t inode_num) {
  * @brief create a new EXT2 filesystem. Will write fs_signature into boot sector,
  * initialize super block, bgd table, block and inode bitmap, and create root directory
  */void create_ext2(void) {
-    printf("[DEBUG] create_ext2() CALLED!\n");
 
     // ===== 1️⃣ Tulis filesystem signature =====
     struct BlockBuffer buffer;
@@ -320,10 +311,10 @@ bool is_directory_empty(uint32_t inode_num) {
     uint8_t *ptr = root_dir.buf;
 
     // Helper macro: buat entry
-    #define ADD_ENTRY(_inode, _name, _type) do {                       \
+    #define ADD_ENTRY(_inode, _name, _name_len, _type) do {                       \
         struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)ptr; \
         entry->inode = (_inode);                                        \
-        entry->name_len = strlen(_name);                                 \
+        entry->name_len = (_name_len);                                 \
         entry->file_type = (_type);                                      \
         entry->rec_len = ((sizeof(struct EXT2DirectoryEntry) + entry->name_len + 3) / 4) * 4; \
         memcpy(ptr + sizeof(struct EXT2DirectoryEntry), (_name), entry->name_len); \
@@ -331,7 +322,7 @@ bool is_directory_empty(uint32_t inode_num) {
     } while(0)
 
     // "." entry
-    ADD_ENTRY(2, ".", EXT2_FT_DIR);
+    ADD_ENTRY(2, ".", 1, EXT2_FT_DIR);
 
     // ".." entry (sisa block)
     uint32_t used = ptr - root_dir.buf;
@@ -347,7 +338,6 @@ bool is_directory_empty(uint32_t inode_num) {
     // Tulis root directory ke disk
     write_blocks(&root_dir, DATA_BLOCK_START, 1);
 
-    printf("[DEBUG] create_ext2() FINISHED creating root directory\n");
 }
 
 /**
@@ -363,7 +353,6 @@ void initialize_filesystem_ext2(void) {
 
 
     if (is_empty_storage()) {
-        printf("[INFO] Storage empty — creating ext2 (create_ext2)...\n");
         create_ext2();
 
         /* after creating, read back superblock/bgdt from image */
@@ -382,19 +371,12 @@ void initialize_filesystem_ext2(void) {
         memcpy(&bgdt, bgdt_buf, sizeof(bgdt));
 
         if (superblock.s_magic != EXT2_SUPER_MAGIC) {
-            printf("[ERROR] Invalid filesystem magic: 0x%X (expected 0x%X)\n",
-                   superblock.s_magic, EXT2_SUPER_MAGIC);
             /* If you want to fallback to create_ext2(), do it here */
             return;
         }
     }
-    printf("[EXT2 DEBUG] s_magic = 0x%X\n", superblock.s_magic);
-    printf("[EXT2 DEBUG] s_inodes_count = %u\n", (unsigned)superblock.s_inodes_count);
-    printf("[EXT2 DEBUG] s_blocks_count = %u\n", (unsigned)superblock.s_blocks_count);
 
     /* Debug: print values that are safe to access */
-    printf("[DEBUG] total_inodes = %u\n", (unsigned)superblock.s_inodes_count);
-    printf("[EXT2 DEBUG] will print root inode & root dir block\n");
     debug_print_inode(2);
     debug_print_dirblock(DATA_BLOCK_START);
 
@@ -487,7 +469,6 @@ int8_t read_directory(struct EXT2DriverRequest *request) {
  */
 void read_inode(uint32_t inode_idx, struct EXT2Inode *inode_out) {
     if (inode_idx == 0) {
-        printf("[ERROR] read_inode(): invalid inode index 0\n");
         memset(inode_out, 0, sizeof(struct EXT2Inode));
         return;
     }
