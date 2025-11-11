@@ -1,6 +1,5 @@
 #include <stdint.h>
 #include <stdbool.h>
-#include <string.h>
 #include <stdio.h>
 #include <stddef.h>
 #include "header/stdlib/string.h"

@@ -51,4 +51,9 @@ void framebuffer_set_cursor(uint8_t r, uint8_t c);
  */
 void framebuffer_clear(void);
 
+void putchar(char c, uint8_t fg, uint8_t bg);
+void puts(char *str, uint32_t char_count, uint8_t fg, uint8_t bg);
+void move_text_cursor(uint8_t r, uint8_t c);
+void clear_screen(void);
+
 #endif
