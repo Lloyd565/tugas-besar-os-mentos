@@ -50,12 +50,16 @@ void kernel_setup(void) {
     pic_remap();
     initialize_idt();
     activate_keyboard_interrupt();
+    // framebuffer_write_string(1, 0, "among us",0xA,0x0);
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
+    framebuffer_write_string(1, 0, "among us",0xA,0x0);
     initialize_filesystem_ext2();
     gdt_install_tss();
+    framebuffer_write_string(1, 0, "among us",0xA,0x0);
     set_tss_register();
-
+    // framebuffer_write_string(1, 0, "among us",0xA,0x0);
+    // initialize_filesystem_ext2();
     // Allocate first 4 MiB virtual memory
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
 
