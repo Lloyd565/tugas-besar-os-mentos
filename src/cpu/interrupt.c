@@ -4,6 +4,7 @@
 #include "header/cpu/gdt.h"
 #include "header/filesystem/ext2.h"
 #include "header/text/framebuffer.h"
+#include "header/stdlib/string.h"
 
 struct TSSEntry _interrupt_tss_entry = {
     .ss0  = GDT_KERNEL_DATA_SEGMENT_SELECTOR,
@@ -78,9 +79,21 @@ void syscall(struct InterruptFrame frame) {
             );
             break;
         case 2:
-            *((int8_t*) frame.cpu.general.ecx) = write(
-                (struct EXT2DriverRequest*) frame.cpu.general.ebx
-            );
+            {
+                struct EXT2DriverRequest kernel_request;
+                struct EXT2DriverRequest *user_request = (struct EXT2DriverRequest*) frame.cpu.general.ebx;
+                
+                memcpy(&kernel_request, user_request, sizeof(struct EXT2DriverRequest));
+                
+                uint8_t kernel_buffer[BLOCK_SIZE * 16];
+                if (kernel_request.buffer_size > 0 && kernel_request.buffer_size <= sizeof(kernel_buffer)) {
+                    memcpy(kernel_buffer, kernel_request.buf, kernel_request.buffer_size);
+
+                    kernel_request.buf = kernel_buffer;
+                }
+                
+                *((int8_t*) frame.cpu.general.ecx) = write(&kernel_request);
+            }
             break;
         case 3:
             *((int8_t*) frame.cpu.general.ecx) = delete(

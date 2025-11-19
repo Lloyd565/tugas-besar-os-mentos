@@ -52,4 +52,14 @@ int memcmp(const void *s1, const void *s2, size_t n);
 */
 void *memmove(void *dest, const void *src, size_t n);
 
+/**
+ * Return the length of the null-terminated string s.
+ */
+size_t strlen(const char *s);
+
+/**
+ * Compare two null-terminated strings lexicographically.
+ * Returns <0 if s1<s2, 0 if equal, >0 if s1>s2.
+ */
+int strcmp(const char *s1, const char *s2);
 #endif

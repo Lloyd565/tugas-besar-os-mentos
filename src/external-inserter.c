@@ -116,6 +116,7 @@ int main(int argc, char *argv[]) {
     reqread.buf = read_buffer;
     int retcode = read(reqread);
     if (retcode == 0) {
+        is_replace = true;
         bool same = true;
         for (uint32_t i = 0; i < (uint32_t)filesize; i++) {
             if (read_buffer[i] != file_buffer[i]) {
