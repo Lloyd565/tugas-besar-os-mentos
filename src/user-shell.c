@@ -1,10 +1,11 @@
 #include <stdint.h>
+#include <stdbool.h>
 #include "header/filesystem/ext2.h"
 
 #define BLOCK_COUNT 16
 
 void syscall(uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx) {
-    __asm__ volatile("mov %0, %%ebx" : /* <Empty> */ : "r"(ebx));
+    __asm__ volatile("mov %0, %%ebx" : /* <Empty> */ : "r"(ebx));//DISINI
     __asm__ volatile("mov %0, %%ecx" : /* <Empty> */ : "r"(ecx));
     __asm__ volatile("mov %0, %%edx" : /* <Empty> */ : "r"(edx));
     __asm__ volatile("mov %0, %%eax" : /* <Empty> */ : "r"(eax));
@@ -18,7 +19,7 @@ int main(void) {
     struct EXT2DriverRequest request = {
         .buf                   = &bl,
         .name                  = "shell",
-        .parent_inode                 = 1,
+        .parent_inode                 = 2,
         .buffer_size           = BLOCK_SIZE * BLOCK_COUNT,
         .name_len = 5,
     };

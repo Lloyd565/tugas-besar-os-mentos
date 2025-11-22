@@ -21,9 +21,12 @@ __attribute__((aligned(0x1000))) struct PageDirectory _paging_kernel_page_direct
 };
 
 static struct PageManagerState page_manager_state = {
-    .page_frame_map = {[0 ... PAGE_FRAME_MAX_COUNT-1] = false}, 
-    .free_page_frame_count = PAGE_FRAME_MAX_COUNT
     // TODO: Initialize page manager state properly
+    .page_frame_map = {
+        [0]                            = true,
+        [1 ... PAGE_FRAME_MAX_COUNT-1] = false
+    },
+    .free_page_frame_count = PAGE_FRAME_MAX_COUNT - 1
 };
 
 void update_page_directory_entry(

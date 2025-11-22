@@ -47,8 +47,14 @@ void pic_remap(void) {
 
 void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
+        case 14:
+            __asm__("hlt");
+            break;
         case PIC1_OFFSET + IRQ_KEYBOARD:
             keyboard_isr();
+            break;
+        case 0x30:
+            syscall(frame);
             break;
     }
 }
@@ -67,6 +73,7 @@ void set_tss_kernel_current_stack(void) {
 }
 
 void syscall(struct InterruptFrame frame) {
+    puts("SYSCALL CALLED\n", 0xE, 0xF, 0x0); //DEBUGGGGGGGGGGGGGG
     switch (frame.cpu.general.eax) {
         case 0:
             *((int8_t*) frame.cpu.general.ecx) = read(
