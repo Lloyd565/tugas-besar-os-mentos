@@ -45,9 +45,10 @@ void kernel_setup(void) {
     pic_remap();
     initialize_idt();
     activate_keyboard_interrupt();
+    // framebuffer_write_string(1, 0, "among us",0xA,0x0);
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
-    // framebuffer_write_string(0, 0, "among us",0xA,0x0);
+    framebuffer_write_string(0, 0, "among us",0xA,0x0);
     initialize_filesystem_ext2();
     framebuffer_write_string(1, 0, "among us",0xA,0x0);
     gdt_install_tss();
