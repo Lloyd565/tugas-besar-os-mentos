@@ -2,6 +2,10 @@
     "debug.onTaskErrors": "debugAnyway",
     "files.associations": {
         "ext2.h": "c",
+<<<<<<< HEAD
+        "stddef.h": "c"
+=======
         "stdtype.h": "c"
+>>>>>>> 59360c1b7b6b73ac2bb34438d8a138951d40c2df
     },
 }

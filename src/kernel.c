@@ -17,34 +17,29 @@
 //     activate_keyboard_interrupt();
 //     framebuffer_clear();
 //     framebuffer_set_cursor(0, 0);
-    
-//     framebuffer_write_string(1, 0, "CALL init ext2...",0xA, 0x0);
 //     initialize_filesystem_ext2();
-//     framebuffer_write_string(2, 0, "RET  init ext2.",0xA,0x0);
+//     gdt_install_tss();
+//     set_tss_register();
 
+//     // Allocate first 4 MiB virtual memory
+//     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
 
-//     int row = 0, col = 0;
-//     keyboard_state_activate();
-//     while (true) {
-//         char c;
-//         get_keyboard_buffer(&c);
-//         if (c) {
-//             framebuffer_write(row, col, c, 0xF, 0);
-//             if (col >= FRAMEBUFFER_WIDTH) {
-//                 ++row;
-//                 col = 0;
-//             } else {
-//                 ++col;
-//             }
-//             framebuffer_set_cursor(row, col);
-//         }
-//     }
-//     struct BlockBuffer b;
-//     for (int i = 0; i < 512; i++) b.buf[i] = i % 16;
-//     write_blocks(&b, 17, 1);
+//     // Write shell into memory
+//     struct EXT2DriverRequest request = {
+//         .buf                   = (uint8_t*) 0,
+//         .name                  = "shell",
+//         .parent_inode          = 1,
+//         .buffer_size           = 0x100000,
+//         .name_len              = 5,
+//     };
+//     read(request);
+
+//     // Set TSS $esp pointer and jump into shell 
+//     set_tss_kernel_current_stack();
+//     kernel_execute_user_program((uint8_t*) 0);
+
 //     while (true);
 // }
-
 void kernel_setup(void) {
     load_gdt(&_gdt_gdtr);
     pic_remap();
@@ -53,13 +48,21 @@ void kernel_setup(void) {
     // framebuffer_write_string(1, 0, "among us",0xA,0x0);
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
-    framebuffer_write_string(1, 0, "among us",0xA,0x0);
+    framebuffer_write_string(0, 0, "among us",0xA,0x0);
     initialize_filesystem_ext2();
+<<<<<<< HEAD
+=======
+    framebuffer_write_string(1, 0, "among us",0xA,0x0);
+>>>>>>> cf6b78a2c14c5804a7fee600ebbe075aa7f152a8
     gdt_install_tss();
     framebuffer_write_string(2, 0, "among us",0xA,0x0);
     set_tss_register();
     framebuffer_write_string(3, 0, "among us",0xA,0x0);
+<<<<<<< HEAD
     // initialize_filesystem_ext2();
+=======
+
+>>>>>>> cf6b78a2c14c5804a7fee600ebbe075aa7f152a8
     // Allocate first 4 MiB virtual memory
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
 

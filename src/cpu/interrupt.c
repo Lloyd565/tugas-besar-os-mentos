@@ -4,6 +4,7 @@
 #include "header/cpu/gdt.h"
 #include "header/filesystem/ext2.h"
 #include "header/text/framebuffer.h"
+#include "header/stdlib/string.h"
 
 struct TSSEntry _interrupt_tss_entry = {
     .ss0  = GDT_KERNEL_DATA_SEGMENT_SELECTOR,
@@ -46,12 +47,16 @@ void pic_remap(void) {
 
 void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
+        case 14:
+            __asm__("hlt");
+            break;
         case PIC1_OFFSET + IRQ_KEYBOARD:
             keyboard_isr();
             break;
         case 0x30:
             syscall(frame);
             break;
+<<<<<<< HEAD
         case 14:
             // Page fault
             {
@@ -62,6 +67,8 @@ void main_interrupt_handler(struct InterruptFrame frame) {
                 while (1);
             }
             break;
+=======
+>>>>>>> cf6b78a2c14c5804a7fee600ebbe075aa7f152a8
     }
 }
 
@@ -79,6 +86,7 @@ void set_tss_kernel_current_stack(void) {
 }
 
 void syscall(struct InterruptFrame frame) {
+    puts("SYSCALL CALLED\n", 0xE, 0xF, 0x0); //DEBUGGGGGGGGGGGGGG
     switch (frame.cpu.general.eax) {
         case 0:
             *((int8_t*) frame.cpu.general.ecx) = read(
@@ -91,9 +99,21 @@ void syscall(struct InterruptFrame frame) {
             );
             break;
         case 2:
-            *((int8_t*) frame.cpu.general.ecx) = write(
-                (struct EXT2DriverRequest*) frame.cpu.general.ebx
-            );
+            {
+                struct EXT2DriverRequest kernel_request;
+                struct EXT2DriverRequest *user_request = (struct EXT2DriverRequest*) frame.cpu.general.ebx;
+                
+                memcpy(&kernel_request, user_request, sizeof(struct EXT2DriverRequest));
+                
+                uint8_t kernel_buffer[BLOCK_SIZE * 16];
+                if (kernel_request.buffer_size > 0 && kernel_request.buffer_size <= sizeof(kernel_buffer)) {
+                    memcpy(kernel_buffer, kernel_request.buf, kernel_request.buffer_size);
+
+                    kernel_request.buf = kernel_buffer;
+                }
+                
+                *((int8_t*) frame.cpu.general.ecx) = write(&kernel_request);
+            }
             break;
         case 3:
             *((int8_t*) frame.cpu.general.ecx) = delete(
