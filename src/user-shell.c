@@ -18,10 +18,11 @@ int main(void) {
     struct EXT2DriverRequest request = {
         .buf                   = &bl,
         .name                  = "shell",
-        .parent_inode                 = 1,
+        .parent_inode                 = 2,
         .buffer_size           = BLOCK_SIZE * BLOCK_COUNT,
         .name_len = 5,
     };
+    
     int32_t retcode;
     syscall(0, (uint32_t) &request, (uint32_t) &retcode, 0);
     if (retcode == 0)

@@ -49,6 +49,19 @@ void main_interrupt_handler(struct InterruptFrame frame) {
         case PIC1_OFFSET + IRQ_KEYBOARD:
             keyboard_isr();
             break;
+        case 0x30:
+            syscall(frame);
+            break;
+        case 14:
+            // Page fault
+            {
+                uint32_t faulting_address;
+                __asm__ volatile ("mov %%cr2, %0" : "=r"(faulting_address));
+                // Here you can handle the page fault, e.g., log it or halt the system
+                // For now, we will just hang the system
+                while (1);
+            }
+            break;
     }
 }
 
