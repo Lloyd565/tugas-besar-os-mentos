@@ -56,19 +56,6 @@ void main_interrupt_handler(struct InterruptFrame frame) {
         case 0x30:
             syscall(frame);
             break;
-<<<<<<< HEAD
-        case 14:
-            // Page fault
-            {
-                uint32_t faulting_address;
-                __asm__ volatile ("mov %%cr2, %0" : "=r"(faulting_address));
-                // Here you can handle the page fault, e.g., log it or halt the system
-                // For now, we will just hang the system
-                while (1);
-            }
-            break;
-=======
->>>>>>> cf6b78a2c14c5804a7fee600ebbe075aa7f152a8
     }
 }
 
@@ -86,7 +73,7 @@ void set_tss_kernel_current_stack(void) {
 }
 
 void syscall(struct InterruptFrame frame) {
-    puts("SYSCALL CALLED\n", 0xE, 0xF, 0x0); //DEBUGGGGGGGGGGGGGG
+    // puts("SYSCALL CALLED\n", 0xE, 0xF, 0x0); //DEBUGGGGGGGGGGGGGG
     switch (frame.cpu.general.eax) {
         case 0:
             *((int8_t*) frame.cpu.general.ecx) = read(

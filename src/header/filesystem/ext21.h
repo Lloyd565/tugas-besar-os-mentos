@@ -1,12 +1,11 @@
 #ifndef _EXT2_H
 #define _EXT2_H
 
-#include "header/driver/disk.h"
+#include "../driver/disk.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "header/stdlib/string.h"
-//#include "../stdlib/stdtype.h"
+#include "../stdlib/stdtype.h"
 
 
 /* -- IF2130 File System constants -- */
@@ -27,8 +26,6 @@
 #define INODE_BITMAP_BLOCK 4 // Inode bitmap di block ke-4
 #define INODE_TABLE_BLOCK 5 // Inode table mulai dari block ke-5
 #define DATA_BLOCK_START (INODE_TABLE_BLOCK + INODES_TABLE_BLOCK_COUNT)
-
-
 
 /**
  * inodes constant 
@@ -221,6 +218,7 @@ struct EXT2DirectoryEntry
      * 8bit unsigned value used to indicate file type.
      */
     uint8_t file_type;
+    char     name[];
 
 }__attribute__((packed));
 
@@ -402,5 +400,14 @@ void allocate_node_blocks(void *ptr, struct EXT2Inode *node, uint32_t prefered_b
  * @param inode location of the node
  */
 void sync_node(struct EXT2Inode *node, uint32_t inode);
+
+bool is_directory_empty(uint32_t inode_num);
+void read_inode(uint32_t inode_num, struct EXT2Inode *inode);
+uint32_t allocate_node(void);
+void allocate_node_blocks(void *ptr, struct EXT2Inode *node, uint32_t prefered_bgd);
+void write_pointer_block(uint32_t block, uint32_t *pointers);
+uint32_t allocate_block(void);
+void write_inode(uint32_t inode_idx, struct EXT2Inode *inode);
+
 
 #endif

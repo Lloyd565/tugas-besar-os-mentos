@@ -50,19 +50,11 @@ void kernel_setup(void) {
     framebuffer_set_cursor(0, 0);
     framebuffer_write_string(0, 0, "among us",0xA,0x0);
     initialize_filesystem_ext2();
-<<<<<<< HEAD
-=======
-    framebuffer_write_string(1, 0, "among us",0xA,0x0);
->>>>>>> cf6b78a2c14c5804a7fee600ebbe075aa7f152a8
     gdt_install_tss();
     framebuffer_write_string(2, 0, "among us",0xA,0x0);
     set_tss_register();
     framebuffer_write_string(3, 0, "among us",0xA,0x0);
-<<<<<<< HEAD
     // initialize_filesystem_ext2();
-=======
-
->>>>>>> cf6b78a2c14c5804a7fee600ebbe075aa7f152a8
     // Allocate first 4 MiB virtual memory
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
 
