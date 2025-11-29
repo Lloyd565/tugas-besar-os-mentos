@@ -37,7 +37,29 @@ void puts(char *buf, uint8_t color, uint8_t bg_color) {
     syscall(6, (uint32_t) buf, buf, bg_color);
 }
 
+struct Command {
+    char command[16];
+    char command_description[64];
+};
 
+void parse_command(char *input, struct Command *out_command) {
+    // Very simple parsing, just copy input to command
+    size_t i = 0;
+    while (input[i] != '\0' || input[i] != '\n') {
+        out_command->command[i] = input[i];
+        i++;
+        if (i >= 15) break; // Prevent overflow
+    }
+    out_command->command[i] = '\0';
+    size_t j = 0;
+    while (input[i] != '\0'){
+        if (input[i] == '\n') continue;
+        out_command->command_description[j] = input[i];
+        i++;
+        j++;
+        if (j>63) break; // Prevent overflow
+    }
+}
 int main(void) {
     struct BlockBuffer      bl[2]   = {0};
     struct EXT2DriverRequest request = {
