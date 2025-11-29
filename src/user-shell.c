@@ -13,6 +13,31 @@ void syscall(uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx) {
     __asm__ volatile("int $0x30");
 }
 
+void read(uint32_t request_ptr, uint32_t retcode_ptr) {
+    syscall(0, request_ptr, retcode_ptr, 0);
+}
+
+void read_directory(uint32_t request_ptr, uint32_t retcode_ptr) {
+    syscall(1, request_ptr, retcode_ptr, 0);
+}
+
+void write(uint32_t request_ptr, uint32_t retcode_ptr) {
+    syscall(2, request_ptr, retcode_ptr, 0);
+}
+
+void delete(uint32_t request_ptr, uint32_t retcode_ptr) {
+    syscall(3, request_ptr, retcode_ptr, 0);
+}
+
+void putchar(uint32_t c, uint8_t color, uint8_t bg_color) {
+    syscall(5, c, color, bg_color);
+}
+
+void puts(char *buf, uint8_t color, uint8_t bg_color) {
+    syscall(6, (uint32_t) buf, buf, bg_color);
+}
+
+
 int main(void) {
     struct BlockBuffer      bl[2]   = {0};
     struct EXT2DriverRequest request = {
