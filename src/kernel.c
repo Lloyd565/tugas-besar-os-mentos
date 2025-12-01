@@ -39,26 +39,30 @@
 //     kernel_execute_user_program((uint8_t*) 0);
 
 //     while (true);
-// }
 void kernel_setup(void) {
     load_gdt(&_gdt_gdtr);
     pic_remap();
     initialize_idt();
     activate_keyboard_interrupt();
-    // framebuffer_write_string(1, 0, "among us",0xA,0x0);
+    keyboard_state_activate(); 
+    
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
-    framebuffer_write_string(0, 0, "among us",0xA,0x0);
+    
+    framebuffer_write_string(0, 0, "[1] Initializing filesystem...", 0xE, 0x0);
     initialize_filesystem_ext2();
+    framebuffer_write_string(0, 1, "[2] Filesystem OK", 0xA, 0x0);
+    
+    framebuffer_write_string(0, 2, "[3] Installing TSS...", 0xE, 0x0);
     gdt_install_tss();
-    framebuffer_write_string(2, 0, "among us",0xA,0x0);
     set_tss_register();
-    framebuffer_write_string(3, 0, "among us",0xA,0x0);
-    // initialize_filesystem_ext2();
-    // Allocate first 4 MiB virtual memory
-    paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
+    framebuffer_write_string(0, 3, "[4] TSS OK", 0xA, 0x0);
 
-    // Write shell into memory
+    framebuffer_write_string(0, 4, "[5] Allocating paging...", 0xE, 0x0);
+    paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
+    framebuffer_write_string(0, 5, "[6] Paging OK", 0xA, 0x0);
+
+    framebuffer_write_string(0, 6, "[7] Reading shell...", 0xE, 0x0);
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
         .name                  = "shell",
@@ -66,18 +70,40 @@ void kernel_setup(void) {
         .buffer_size           = 0x100000,
         .name_len              = 5,
     };
-    read(request);
 
-    uint8_t* fix_ptr = (uint8_t*) 0x0;
+    int8_t retcode = read(request);
 
-    if (fix_ptr[4] == 0x08) {
-        fix_ptr[4] = 0x00;
-        fix_ptr[5] = 0xEB;
+    if (retcode == 0) {
+        framebuffer_write_string(0, 7, "[8] Shell loaded OK", 0xA, 0x0);
+        
+        // TAMBAHKAN INI - Set TSS dan execute shell
+        set_tss_kernel_current_stack();
+        kernel_execute_user_program((uint8_t*) 0);
+        
+    } else {
+        framebuffer_write_string(0, 7, "[8] Shell FAIL! RC=", 0xC, 0x0);
+        
+        char rc_display = '0' + retcode;
+        if (retcode < 0) {
+            framebuffer_write(19, 7, '-', 0xC, 0x0);
+            rc_display = '0' + (-retcode);
+            framebuffer_write(20, 7, rc_display, 0xC, 0x0);
+        } else {
+            framebuffer_write(19, 7, rc_display, 0xC, 0x0);
+        }
+        
+        if (retcode == 1) {
+            framebuffer_write_string(0, 8, "Error: Not a file", 0xC, 0x0);
+        } else if (retcode == 2) {
+            framebuffer_write_string(0, 8, "Error: Buffer too small", 0xC, 0x0);
+        } else if (retcode == 3) {
+            framebuffer_write_string(0, 8, "Error: File not found", 0xC, 0x0);
+        } else if (retcode == 4) {
+            framebuffer_write_string(0, 8, "Error: Parent not dir", 0xC, 0x0);
+        }
+        
+        while(true); // STOP HERE
     }
-    // Set TSS $esp pointer and jump into shell 
-    set_tss_kernel_current_stack();
-    framebuffer_write_string(4, 0, "among us",0xA,0x0);
-    kernel_execute_user_program((uint8_t*) 0);
-    framebuffer_write_string(5, 0, "among us",0xA,0x0);
-    while (true);
+    
+    while (true); // Infinite loop jika shell return
 }

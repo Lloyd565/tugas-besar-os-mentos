@@ -37,15 +37,14 @@ extern const char keyboard_scancode_1_to_ascii_map[256];
  * @param keyboard_input_on  Indicate whether keyboard ISR is activated or not
  * @param keyboard_buffer    Storing keyboard input values in ASCII
  */
+extern struct KeyboardDriverState keyboard_state;
+
 struct KeyboardDriverState {
     bool read_extended_mode;
     bool keyboard_input_on;
-    char keyboard_buffer;
+    volatile char keyboard_buffer;  // TAMBAHKAN volatile
     bool shift_pressed;
-} __attribute((packed));
-
-
-
+} __attribute__((packed));
 
 
 /* -- Driver Interfaces -- */
@@ -69,5 +68,7 @@ bool is_shift_presseed(void);
  * Will start listen and process keyboard scancode if keyboard_input_on.
  */
 void keyboard_isr(void);
+
+
 
 #endif

@@ -101,7 +101,14 @@ kernel_execute_user_program:
     mov  eax, ecx
     add  eax, 0x400000 - 4
     push eax ; User space stack pointer (esp), move it into last 4 MiB
-    pushf    ; eflags register state, when jump inside user program
+    pushf    ; eflags register state, when jump inside user program\
+
+
+    ; CRITICAL: Enable interrupts di EFLAGS
+    pop eax
+    or eax, 0x200      ; Set IF (Interrupt Flag) bit
+    push eax
+
     mov  eax, 0x18 | 0x3
     push eax ; Code segment selector (GDT_USER_CODE_SELECTOR), user privilege
     mov  eax, ecx

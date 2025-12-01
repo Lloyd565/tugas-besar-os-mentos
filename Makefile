@@ -25,7 +25,7 @@ disk:
 	@mkdir -p $(OUTPUT_FOLDER)
 	@qemu-img create -f raw $(OUTPUT_FOLDER)/$(DISK_NAME).bin 4M
 
-run: iso disk
+run: iso
 	@echo "Running OS in QEMU..."
 	@qemu-system-i386 -s -drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk -cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso
 

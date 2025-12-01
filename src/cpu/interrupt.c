@@ -107,9 +107,21 @@ void syscall(struct InterruptFrame frame) {
                 *(struct EXT2DriverRequest*) frame.cpu.general.ebx
             );
             break;
-        case 4:
-            get_keyboard_buffer((char*) frame.cpu.general.ebx);
+        case 4: { // getchar - BLOCKING version
+            // JANGAN panggil keyboard_state_activate() di sini!
+            // Keyboard sudah aktif dari awal
+            
+            // Busy-wait sampai ada input
+            while (keyboard_state.keyboard_buffer == '\0') {
+                // Yield CPU - enable interrupt sebentar
+                __asm__ volatile("sti; hlt; cli");
+            }
+            
+            // Ambil karakter
+            *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
+            keyboard_state.keyboard_buffer = '\0';
             break;
+        }
         case 5:
             putchar(
                 (char) frame.cpu.general.ebx,
