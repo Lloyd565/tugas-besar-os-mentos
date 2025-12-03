@@ -108,13 +108,10 @@ void syscall(struct InterruptFrame frame) {
             );
             break;
         case 4: { // getchar - BLOCKING version
-            // JANGAN panggil keyboard_state_activate() di sini!
-            // Keyboard sudah aktif dari awal
-            
             // Busy-wait sampai ada input
             while (keyboard_state.keyboard_buffer == '\0') {
                 // Yield CPU - enable interrupt sebentar
-                __asm__ volatile("sti; hlt; cli");
+                __asm__ volatile("sti; hlt");
             }
             
             // Ambil karakter
@@ -129,25 +126,40 @@ void syscall(struct InterruptFrame frame) {
                 0x0
             );
             break;
-        case 6:
-            puts(
-                (char*) frame.cpu.general.ebx, 
-                frame.cpu.general.ecx, 
-                frame.cpu.general.edx,
-                0x0
-            ); // Assuming puts() exist in kernel
+        case 6: {
+            char *str = (char*) frame.cpu.general.ebx;
+            uint32_t len = frame.cpu.general.ecx;
+            uint8_t color = (uint8_t) frame.cpu.general.edx;
+            
+            // Print character by character karena puts() mungkin bermasalah
+            for (uint32_t i = 0; i < len && str[i] != '\0'; i++) {
+                putchar(str[i], color, 0x0);
+            }
             break;
+        }
         case 7: 
             keyboard_state_activate();
             break;
-        // case 8:
-        //     move_text_cursor(
-        //         (uint8_t) frame.cpu.general.ebx, 
-        //         (uint8_t) frame.cpu.general.ecx
-        //     );
-        //     break;
-        // case 9:
-        //     clear_screen();
-        //     break;
+        case 8: // get_inode
+        {
+            struct EXT2DriverRequest *req = (struct EXT2DriverRequest *)frame.cpu.general.ebx;
+            uint32_t *result_inode = (uint32_t *)frame.cpu.general.ecx;
+            int8_t *retcode_ptr = (int8_t *)frame.cpu.general.edx;
+            
+            int8_t retcode = get_inode(*req, result_inode);
+            *retcode_ptr = retcode;
+            break;
+        }
+
+        case 9: // get_resolved_path
+        {
+            struct EXT2DriverRequest *req = (struct EXT2DriverRequest *)frame.cpu.general.ebx;
+            char *result_path = (char *)frame.cpu.general.ecx;
+            int8_t *retcode_ptr = (int8_t *)frame.cpu.general.edx;
+            
+            int8_t retcode = get_resolved_path(*req, result_path);
+            *retcode_ptr = retcode;
+            break;
+        }
     }
 }

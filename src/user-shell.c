@@ -44,6 +44,14 @@ void syscall_puts(char *str, uint32_t len, uint8_t color) {
     syscall(6, (uint32_t)str, len, color);
 }
 
+void syscall_get_inode(struct EXT2DriverRequest *request, uint32_t *result_inode, int8_t *retcode) {
+    syscall(8, (uint32_t)request, (uint32_t)result_inode, (uint32_t)retcode);
+}
+
+void syscall_get_resolved_path(struct EXT2DriverRequest *request, char *result_path, int8_t *retcode) {
+    syscall(9, (uint32_t)request, (uint32_t)result_path, (uint32_t)retcode);
+}
+
 void syscall_activate_keyboard() {
     syscall(7, 0, 0, 0);
 }
@@ -138,14 +146,9 @@ void parse_input(char *input, struct Command *cmd) {
 void print(char *str, uint8_t color) {
     syscall_puts(str, my_strlen(str), color);
 }
-
 // Command: ls - list directory contents
 void cmd_ls() {
     struct BlockBuffer buf;
-    // Read current directory inode
-    // Note: We need to read inode directly, but in user space we don't have read_inode()
-    // So we'll use syscall_read_directory with empty name to get directory content
-    
     struct EXT2DriverRequest req = {
         .buf = &buf,
         .name = "",
@@ -165,18 +168,19 @@ void cmd_ls() {
     uint32_t offset = 0;
     struct EXT2DirectoryEntry *entry;
     
-    // Skip . and ..
-    entry = (struct EXT2DirectoryEntry *)(buf.buf + offset);
-    offset += entry->rec_len;
-    entry = (struct EXT2DirectoryEntry *)(buf.buf + offset);
-    offset += entry->rec_len;
-    
-    // List entries
+    // List all entries
     while (offset < BLOCK_SIZE) {
         entry = (struct EXT2DirectoryEntry *)(buf.buf + offset);
         if (entry->rec_len == 0 || entry->inode == 0) break;
         
+        // Skip . and .. for display
         char *name = (char *)(entry + 1);
+        if ((entry->name_len == 1 && name[0] == '.') ||
+            (entry->name_len == 2 && name[0] == '.' && name[1] == '.')) {
+            offset += entry->rec_len;
+            continue;
+        }
+        
         char name_buf[256];
         memset(name_buf, 0, 256);
         for (uint8_t i = 0; i < entry->name_len; i++) {
@@ -195,78 +199,55 @@ void cmd_ls() {
     }
     print("\n", 0xF);
 }
-
-// Command: cd - change directory
 void cmd_cd(char *dirname) {
     if (dirname[0] == '\0') {
-        // cd to root
         shell_state.current_dir_inode = 2;
         my_strcpy(shell_state.current_path, "/");
         return;
     }
     
-    struct BlockBuffer buf;
+    if (my_strcmp(dirname, ".") == 0) {
+        return;
+    }
+    // Step 1: Get the inode
     struct EXT2DriverRequest req = {
-        .buf = &buf,
         .name = dirname,
         .name_len = my_strlen(dirname),
-        .parent_inode = shell_state.current_dir_inode,
-        .buffer_size = BLOCK_SIZE
+        .parent_inode = shell_state.current_dir_inode
     };
     
-    int8_t retcode;
-    syscall_read_directory(&req, &retcode);
+    uint32_t new_inode = 0;
+    int8_t retcode = -1;
+    syscall_get_inode(&req, &new_inode, &retcode);
     
-    if (retcode == 0) {
-        // Find the inode of the directory
-        uint32_t offset = 0;
-        struct EXT2DirectoryEntry *entry;
-        
-        // Skip . and ..
-        entry = (struct EXT2DirectoryEntry *)(buf.buf + offset);
-        offset += entry->rec_len;
-        entry = (struct EXT2DirectoryEntry *)(buf.buf + offset);
-        offset += entry->rec_len;
-        
-        while (offset < BLOCK_SIZE) {
-            entry = (struct EXT2DirectoryEntry *)(buf.buf + offset);
-            if (entry->rec_len == 0) break;
-            
-            if (entry->inode != 0) {
-                char *name = (char *)(entry + 1);
-                if (entry->name_len == req.name_len && 
-                    memcmp(name, dirname, req.name_len) == 0) {
-                    shell_state.current_dir_inode = entry->inode;
-                    
-                    // Update path
-                    if (my_strcmp(dirname, "..") == 0) {
-                        // Go up one level
-                        size_t len = my_strlen(shell_state.current_path);
-                        if (len > 1) {
-                            len--;
-                            while (len > 0 && shell_state.current_path[len] != '/') {
-                                shell_state.current_path[len] = '\0';
-                                len--;
-                            }
-                            if (len == 0) shell_state.current_path[1] = '\0';
-                        }
-                    } else if (my_strcmp(dirname, ".") != 0) {
-                        // Add to path
-                        if (shell_state.current_path[my_strlen(shell_state.current_path)-1] != '/') {
-                            my_strcat(shell_state.current_path, "/");
-                        }
-                        my_strcat(shell_state.current_path, dirname);
-                    }
-                    return;
-                }
-            }
-            offset += entry->rec_len;
-        }
+    if (retcode != 0) {
+        print("cd: directory not found\n", 0xC);
+        return;
+    }
+    // Step 2: Get resolved path
+    char new_path[256];
+    memset(new_path, 0, 256);
+    
+    struct EXT2DriverRequest path_req = {
+        .buf = shell_state.current_path,
+        .name = dirname,
+        .name_len = my_strlen(dirname)
+    };
+    
+    retcode = -1;
+    syscall_get_resolved_path(&path_req, new_path, &retcode);
+
+    // Step 3: Update shell state
+    shell_state.current_dir_inode = new_inode;
+    
+    if (new_path[0] != '\0') {
+        my_strcpy(shell_state.current_path, new_path);
+    } else {
+        print("WARNING: path empty, using fallback\n", 0xE);
+        my_strcpy(shell_state.current_path, "/?");
     }
     
-    print("cd: directory not found\n", 0xC);
 }
-
 // Command: mkdir - create directory
 void cmd_mkdir(char *dirname) {
     if (dirname[0] == '\0') {
@@ -456,8 +437,6 @@ void read_line(char *buffer, uint32_t max_len) {
     // const char *test_commands[] = {"help", "pwd", "ls"};
     // ... dst
     
-    // Langsung pakai keyboard real:
-    print("DEBUG: Waiting for input...\n", 0xE);
     uint32_t pos = 0;
     char c;
     
@@ -486,21 +465,11 @@ int main(void) {
     shell_state.current_dir_inode = 2;
     my_strcpy(shell_state.current_path, "/");
     
-    // Activate keyboard
-    // syscall_activate_keyboard();
-    
-    // Print welcome message
     print("\n", 0xF);
     print("===================================\n", 0xB);
     print("    Simple Shell - OS 2025\n", 0xE);
     print("===================================\n", 0xB);
     print("Type 'help' for available commands\n\n", 0x7);
-    
-    // HAPUS atau COMMENT 3 baris ini:
-    // print("Activating keyboard...\n", 0xE);
-    // syscall_activate_keyboard();  // <-- DUPLIKAT!
-    // print("Keyboard activated!\n", 0xA);
-    // print("Try typing now...\n\n", 0x7);
     
     char input_buffer[INPUT_BUFFER_SIZE];
     struct Command cmd;

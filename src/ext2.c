@@ -31,6 +31,401 @@ void commit_metadata(void)
     write_blocks(&buffer, 2, 1);
 }
 
+/* =================== PATH PARSING ============================*/
+// Parse path and return final parent inode and filename
+// Example: "folderA/folderB/file.txt" with parent_inode=2
+//          -> Returns: parent_inode=<folderB's inode>, name="file.txt"
+/* =================== PATH PARSING ============================*/
+// Parse path and return final parent inode and filename
+// Example: "folderA/folderB/file.txt" with parent_inode=2
+//          -> Returns: parent_inode=<folderB's inode>, name="file.txt"
+// bool parse_path_in_kernel(uint32_t start_inode, char *path, uint8_t path_len,
+//                           uint32_t *final_parent_inode, char *final_name, uint8_t *final_name_len)
+// {
+//     uint32_t current_inode = start_inode;
+//     uint32_t i = 0;
+    
+//     // Handle absolute path
+//     if (path_len > 0 && path[0] == '/') {
+//         current_inode = 2; // Root
+//         i = 1;
+//     }
+    
+//     // Parse path tokens
+//     while (i < path_len) {
+//         // Extract next token
+//         uint32_t token_start = i;
+//         while (i < path_len && path[i] != '/') {
+//             i++;
+//         }
+//         uint32_t token_len = i - token_start;
+        
+//         // Check if this is the last token
+//         bool is_last = (i >= path_len);
+//         if (!is_last && i + 1 < path_len) {
+//             is_last = false;
+//         } else if (i < path_len && path[i] == '/') {
+//             // Check if there's anything after this '/'
+//             uint32_t j = i + 1;
+//             while (j < path_len && path[j] == '/') j++; // Skip multiple slashes
+//             is_last = (j >= path_len);
+//         }
+        
+//         if (is_last) {
+//             // This is the final filename
+//             *final_parent_inode = current_inode;
+//             *final_name_len = (uint8_t)token_len;
+//             for (uint32_t j = 0; j < token_len; j++) {
+//                 final_name[j] = path[token_start + j];
+//             }
+//             return true;
+//         }
+        
+//         // This is a directory - find it and navigate into it
+//         char token_buf[256];
+//         for (uint32_t j = 0; j < token_len; j++) {
+//             token_buf[j] = path[token_start + j];
+//         }
+        
+//         struct EXT2DirectoryEntry *entry = find_entry_in_dir(current_inode, 
+//                                                               token_buf, 
+//                                                               (uint8_t)token_len);
+//         if (entry == (struct EXT2DirectoryEntry *)0) {
+//             return false; // Directory not found
+//         }
+        
+//         if (entry->file_type != EXT2_FT_DIR) {
+//             return false; // Not a directory
+//         }
+        
+//         current_inode = entry->inode;
+        
+//         // Skip the '/' and any additional slashes
+//         if (i < path_len && path[i] == '/') {
+//             i++;
+//             while (i < path_len && path[i] == '/') i++; // Skip multiple slashes
+//         }
+//     }
+    
+//     // If we reach here, path was all directories with no file
+//     *final_parent_inode = current_inode;
+//     *final_name_len = 0;
+//     return true;
+// }
+
+// Add this new function after the existing helper functions
+// Add this new function after the existing helper functions
+
+void build_absolute_path(char *current_path, char *relative_path, char *result_path)
+{
+    // Step 1: Parse current_path into components
+    char components[32][64];
+    uint8_t comp_count = 0;
+
+    // Only parse current_path if it's not just "/"
+    if (!(current_path[0] == '/' && current_path[1] == '\0')) {
+        uint32_t len = 0;
+        while (current_path[len] != '\0') len++;   // <- PAKAI len SEBAGAI INDEX
+
+        uint32_t i = 0;
+        while (i < len && comp_count < 32) {
+            // Skip slashes
+            while (i < len && current_path[i] == '/') i++;
+            if (i >= len) break;
+
+            // Extract component
+            uint32_t start = i;
+            while (i < len && current_path[i] != '/') i++;
+            uint32_t comp_len = i - start;
+
+            // Copy component
+            if (comp_len > 0 && comp_len < 64) {
+                for (uint32_t j = 0; j < comp_len; j++) {
+                    components[comp_count][j] = current_path[start + j];
+                }
+                components[comp_count][comp_len] = '\0';
+                comp_count++;
+            }
+        }
+    }
+
+    // Step 2: Process relative_path components
+    uint32_t rel_len = 0;
+    while (relative_path[rel_len] != '\0') rel_len++;  // <- SAMA, PAKAI rel_len
+
+    uint32_t i = 0;
+    while (i < rel_len) {
+        // Skip slashes
+        while (i < rel_len && relative_path[i] == '/') i++;
+        if (i >= rel_len) break;
+
+        // Extract component
+        uint32_t start = i;
+        while (i < rel_len && relative_path[i] != '/') i++;
+        uint32_t comp_len = i - start;
+
+        if (comp_len == 0) continue;
+
+        // Check component type
+        if (comp_len == 2 && relative_path[start] == '.' && relative_path[start+1] == '.') {
+            // ".." - go up
+            if (comp_count > 0) {
+                comp_count--;
+            }
+        } else if (comp_len == 1 && relative_path[start] == '.') {
+            // "." - skip
+        } else {
+            // Regular component - add it
+            if (comp_count < 32 && comp_len < 64) {
+                for (uint32_t j = 0; j < comp_len; j++) {
+                    components[comp_count][j] = relative_path[start + j];
+                }
+                components[comp_count][comp_len] = '\0';
+                comp_count++;
+            }
+        }
+    }
+
+    // Step 3: Build result path
+    if (comp_count == 0) {
+        result_path[0] = '/';
+        result_path[1] = '\0';
+    } else {
+        uint32_t pos = 0;
+        for (uint8_t c = 0; c < comp_count; c++) {
+            result_path[pos++] = '/';
+
+            uint32_t j = 0;
+            while (components[c][j] != '\0' && pos < 255) {
+                result_path[pos++] = components[c][j++];
+            }
+        }
+        result_path[pos] = '\0';
+    }
+}
+
+
+int8_t get_resolved_path(struct EXT2DriverRequest request, char *result_path)
+{
+    // request.buf should contain current_path (char*)
+    char *current_path = (char *)request.buf;
+    
+    // Build the new absolute path
+    build_absolute_path(current_path, request.name, result_path);
+    
+    return 0;
+}
+/* =================== PATH RESOLUTION ============================*/
+// Resolve a full path and return the final inode
+// Returns 0 if path doesn't exist
+uint32_t resolve_path(uint32_t start_inode, char *path, uint8_t path_len)
+{
+    if (path_len == 0 || (path_len == 1 && path[0] == '.')) {
+        return start_inode;
+    }
+    
+    uint32_t current_inode = start_inode;
+    uint32_t i = 0;
+    
+    // Handle absolute path
+    if (path_len > 0 && path[0] == '/') {
+        current_inode = 2; // Root
+        i = 1;
+    }
+    
+    // Parse path tokens
+    while (i < path_len) {
+        // Skip multiple slashes
+        while (i < path_len && path[i] == '/') {
+            i++;
+        }
+        
+        if (i >= path_len) {
+            break;
+        }
+        
+        // Extract next token
+        uint32_t token_start = i;
+        while (i < path_len && path[i] != '/') {
+            i++;
+        }
+        uint32_t token_len = i - token_start;
+        
+        if (token_len == 0) {
+            continue;
+        }
+        
+        // Create token buffer
+        char token_buf[256];
+        for (uint32_t j = 0; j < token_len; j++) {
+            token_buf[j] = path[token_start + j];
+        }
+        
+        // Find this directory/file in current inode
+        struct EXT2DirectoryEntry *entry = find_entry_in_dir(current_inode, 
+                                                              token_buf, 
+                                                              (uint8_t)token_len);
+        if (entry == (struct EXT2DirectoryEntry *)0) {
+            return 0; // Not found
+        }
+        
+        current_inode = entry->inode;
+    }
+    
+    return current_inode;
+}
+
+
+// Update the parse_path_in_kernel function to use resolve_path internally
+bool parse_path_in_kernel(uint32_t start_inode, char *path, uint8_t path_len,
+                          uint32_t *final_parent_inode, char *final_name, uint8_t *final_name_len)
+{
+    uint32_t current_inode = start_inode;
+    uint32_t i = 0;
+    
+    // Handle absolute path
+    if (path_len > 0 && path[0] == '/') {
+        current_inode = 2; // Root
+        i = 1;
+    }
+    
+    // Skip leading slashes
+    while (i < path_len && path[i] == '/') {
+        i++;
+    }
+    
+    if (i >= path_len) {
+        // Path is just "/" or empty
+        *final_parent_inode = current_inode;
+        *final_name_len = 0;
+        return true;
+    }
+    
+    // Parse path tokens
+    while (i < path_len) {
+        // Extract next token
+        uint32_t token_start = i;
+        while (i < path_len && path[i] != '/') {
+            i++;
+        }
+        uint32_t token_len = i - token_start;
+        
+        // Skip trailing slashes
+        while (i < path_len && path[i] == '/') {
+            i++;
+        }
+        
+        // Check if this is the last token
+        bool is_last = (i >= path_len);
+        
+        if (is_last) {
+            // This is the final filename
+            *final_parent_inode = current_inode;
+            *final_name_len = (uint8_t)token_len;
+            for (uint32_t j = 0; j < token_len; j++) {
+                final_name[j] = path[token_start + j];
+            }
+            return true;
+        }
+        
+        // This is a directory - find it and navigate into it
+        char token_buf[256];
+        for (uint32_t j = 0; j < token_len; j++) {
+            token_buf[j] = path[token_start + j];
+        }
+        
+        struct EXT2DirectoryEntry *entry = find_entry_in_dir(current_inode, 
+                                                              token_buf, 
+                                                              (uint8_t)token_len);
+        if (entry == (struct EXT2DirectoryEntry *)0) {
+            return false; // Directory not found
+        }
+        
+        if (entry->file_type != EXT2_FT_DIR) {
+            return false; // Not a directory
+        }
+        
+        current_inode = entry->inode;
+    }
+    
+    // If we reach here, path was all directories with no file
+    *final_parent_inode = current_inode;
+    *final_name_len = 0;
+    return true;
+}
+
+
+/* =================== GET INODE OPERATION ============================*/
+// Get inode number for a given path
+int8_t get_inode(struct EXT2DriverRequest request, uint32_t *result_inode)
+{
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request.parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request.name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request.name_len; i++) {
+        if (request.name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request.parent_inode, request.name, request.name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 1; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request.name_len; i++) {
+            final_name[i] = request.name[i];
+        }
+    }
+    
+    // Special cases
+    if (final_name_len == 0 || (final_name_len == 1 && final_name[0] == '.')) {
+        *result_inode = parent_inode;
+        return 0;
+    }
+    
+    // Handle ".."
+    if (final_name_len == 2 && final_name[0] == '.' && final_name[1] == '.') {
+        struct EXT2Inode node;
+        read_inode(parent_inode, &node);
+        
+        if (!(node.i_mode & EXT2_S_IFDIR)) {
+            return 2; // Not a directory
+        }
+        
+        struct BlockBuffer buf;
+        read_blocks(&buf, node.i_block[0], 1);
+        
+        // Second entry is ".."
+        struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)buf.buf;
+        struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)(buf.buf + dot->rec_len);
+        
+        *result_inode = dotdot->inode;
+        return 0;
+    }
+    
+    // Find the entry
+    struct EXT2DirectoryEntry *entry = find_entry_in_dir(parent_inode, final_name, final_name_len);
+    
+    if (entry == (struct EXT2DirectoryEntry *)0) {
+        return 1; // Not found
+    }
+    
+    if (entry->file_type != EXT2_FT_DIR) {
+        return 2; // Not a directory
+    }
+    
+    *result_inode = entry->inode;
+    return 0;
+}
+
 char *get_entry_name(void *entry)
 {
     return (char *)((struct EXT2DirectoryEntry *)entry + 1);
@@ -412,14 +807,42 @@ struct EXT2DirectoryEntry *find_entry_in_dir(uint32_t dir_inode, char *name, uin
 /* =================== READ OPERATIONS ============================*/
 int8_t read(struct EXT2DriverRequest request)
 {
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request.parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request.name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request.name_len; i++) {
+        if (request.name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request.parent_inode, request.name, request.name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 3; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request.name_len; i++) {
+            final_name[i] = request.name[i];
+        }
+    }
+    
+    // Validate parent
     struct EXT2Inode parent_node;
-    read_inode(request.parent_inode, &parent_node);
+    read_inode(parent_inode, &parent_node);
 
     if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
         return 4;
     }
 
-    struct EXT2DirectoryEntry *entry = find_entry_in_dir(request.parent_inode, request.name, request.name_len);
+    // Find entry with parsed name
+    struct EXT2DirectoryEntry *entry = find_entry_in_dir(parent_inode, final_name, final_name_len);
 
     if (entry == (struct EXT2DirectoryEntry *)0) {
         return 3;
@@ -458,23 +881,49 @@ int8_t read(struct EXT2DriverRequest request)
 }
 int8_t read_directory(struct EXT2DriverRequest *request)
 {
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request->parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request->name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request->name_len; i++) {
+        if (request->name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request->parent_inode, request->name, request->name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 2; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request->name_len; i++) {
+            final_name[i] = request->name[i];
+        }
+    }
+    
     struct EXT2Inode parent_node;
-    read_inode(request->parent_inode, &parent_node);
+    read_inode(parent_inode, &parent_node);
 
     if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
         return 3;
     }
 
     // If name is empty or ".", read the parent_inode itself
-    if (request->name_len == 0 || 
-        (request->name_len == 1 && request->name[0] == '.')) {
+    if (final_name_len == 0 || 
+        (final_name_len == 1 && final_name[0] == '.')) {
         struct BlockBuffer dir_buff;
         read_blocks(&dir_buff, parent_node.i_block[0], 1);
         memcpy(request->buf, dir_buff.buf, BLOCK_SIZE);
         return 0;
     }
 
-    struct EXT2DirectoryEntry *entry = find_entry_in_dir(request->parent_inode, request->name, request->name_len);
+    struct EXT2DirectoryEntry *entry = find_entry_in_dir(parent_inode, final_name, final_name_len);
 
     if (entry == (struct EXT2DirectoryEntry *)0) {
         return 2;
@@ -497,15 +946,41 @@ int8_t read_directory(struct EXT2DriverRequest *request)
 /* =================== WRITE OPERATIONS ============================*/
 int8_t write(struct EXT2DriverRequest *request)
 {
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request->parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request->name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request->name_len; i++) {
+        if (request->name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request->parent_inode, request->name, request->name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 2; // Parent path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request->name_len; i++) {
+            final_name[i] = request->name[i];
+        }
+    }
+    
     // 1. Validate parent inode
     struct EXT2Inode parent_node;
-    read_inode(request->parent_inode, &parent_node);
+    read_inode(parent_inode, &parent_node);
     if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
         return 2;
     }
 
     // 2. Check if entry already exists
-    struct EXT2DirectoryEntry *existing = find_entry_in_dir(request->parent_inode, request->name, request->name_len);
+    struct EXT2DirectoryEntry *existing = find_entry_in_dir(parent_inode, final_name, final_name_len);
     if (existing != (struct EXT2DirectoryEntry *)0) {
         return 1;
     }
@@ -532,7 +1007,7 @@ int8_t write(struct EXT2DriverRequest *request)
         }
 
         new_node.i_block[0] = dir_block;
-        init_directory_table(&new_node, new_inode, request->parent_inode);
+        init_directory_table(&new_node, new_inode, parent_inode);
 
         bgdt.table[0].bg_used_dirs_count++;
     } else {
@@ -586,7 +1061,7 @@ int8_t write(struct EXT2DriverRequest *request)
         offset += entry->rec_len;
     }
 
-    uint16_t new_rec_len = get_entry_record_len(request->name_len);
+    uint16_t new_rec_len = get_entry_record_len(final_name_len);
     if (last_entry != (struct EXT2DirectoryEntry *)0) {
         uint16_t actual_last_len = get_entry_record_len(last_entry->name_len);
         uint16_t available_space = last_entry->rec_len - actual_last_len;
@@ -599,22 +1074,46 @@ int8_t write(struct EXT2DriverRequest *request)
     struct EXT2DirectoryEntry *new_entry = (struct EXT2DirectoryEntry *)(parent_buff.buf + offset);
     new_entry->inode = new_inode;
     new_entry->rec_len = BLOCK_SIZE - offset;
-    new_entry->name_len = request->name_len;
+    new_entry->name_len = final_name_len;
     new_entry->file_type = request->is_directory ? EXT2_FT_DIR : EXT2_FT_REG_FILE;
-    memcpy(get_entry_name(new_entry), request->name, request->name_len);
+    memcpy(get_entry_name(new_entry), final_name, final_name_len);
 
     write_blocks(&parent_buff, parent_node.i_block[0], 1);
     commit_metadata();
 
     return 0;
 }
-
-/* =================== DELETE OPERATIONS ============================*/
 /* =================== DELETE OPERATIONS ============================*/
 int8_t delete(struct EXT2DriverRequest request)
 {
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request.parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request.name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request.name_len; i++) {
+        if (request.name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request.parent_inode, request.name, request.name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 1; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request.name_len; i++) {
+            final_name[i] = request.name[i];
+        }
+    }
+    
     struct EXT2Inode parent_node;
-    read_inode(request.parent_inode, &parent_node);
+    read_inode(parent_inode, &parent_node);
 
     if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
         return 3;
@@ -632,9 +1131,9 @@ int8_t delete(struct EXT2DriverRequest request)
 
         if (entry->rec_len == 0) break;
 
-        if (entry->inode != 0 && entry->name_len == request.name_len) {
+        if (entry->inode != 0 && entry->name_len == final_name_len) {
             char *entry_name = get_entry_name(entry);
-            if (memcmp(entry_name, request.name, request.name_len) == 0) {
+            if (memcmp(entry_name, final_name, final_name_len) == 0) {
                 target_entry = entry;
                 break;
             }

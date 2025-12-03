@@ -313,4 +313,14 @@ int8_t write(struct EXT2DriverRequest *request);
  */
 int8_t delete(struct EXT2DriverRequest request);
 
+// Helper function
+void build_absolute_path(char *current_path, char *relative_path, char *result_path);
+
+// Syscall 8 handler
+int8_t get_inode(struct EXT2DriverRequest request, uint32_t *result_inode);
+
+// Syscall 9 handler  
+int8_t get_resolved_path(struct EXT2DriverRequest request, char *result_path);
+
+
 #endif
