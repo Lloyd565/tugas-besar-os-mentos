@@ -25,7 +25,7 @@ disk:
 	@mkdir -p $(OUTPUT_FOLDER)
 	@qemu-img create -f raw $(OUTPUT_FOLDER)/$(DISK_NAME).bin 4M
 
-run: iso
+run: iso disk
 	@echo "Running OS in QEMU..."
 	@qemu-system-i386 -s -drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk -cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso
 
@@ -45,6 +45,7 @@ kernel:
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/ext2.c -o $(OUTPUT_FOLDER)/ext2.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/disk.c -o $(OUTPUT_FOLDER)/disk.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/paging.c -o $(OUTPUT_FOLDER)/paging.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/process/process.c -o $(OUTPUT_FOLDER)/process.o
 	@echo "Linking object files and generating ELF32 kernel..."
 	@$(LD) $(LFLAGS) \
 		$(OUTPUT_FOLDER)/kernel-entrypoint.o \
@@ -60,6 +61,7 @@ kernel:
 		$(OUTPUT_FOLDER)/ext2.o \
 		$(OUTPUT_FOLDER)/disk.o \
 		$(OUTPUT_FOLDER)/paging.o \
+		$(OUTPUT_FOLDER)/process.o \
 		-o $(OUTPUT_FOLDER)/kernel
 
 iso: kernel
@@ -106,8 +108,3 @@ user-shell:
 insert-shell: inserter user-shell
 	@echo Inserting shell into root directory... 
 	@cd $(OUTPUT_FOLDER); ./inserter shell 2 $(DISK_NAME).bin
-
-.PHONY: all
-
-all: clean disk user-shell insert-shell run
-	@echo "=== SELESAI SEMUA TASK ==="
