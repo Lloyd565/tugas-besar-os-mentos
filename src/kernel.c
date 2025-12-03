@@ -9,6 +9,9 @@
 #include "header/driver/disk.h"
 #include "header/filesystem/ext2.h"
 #include "header/memory/paging.h"
+#include "header/process/process.h"
+
+extern struct ProcessControlBlock _process_list[PROCESS_COUNT_MAX];
 
 // void kernel_setup(void) {
 //     load_gdt(&_gdt_gdtr);
@@ -40,25 +43,60 @@
 
 //     while (true);
 // }
+// void kernel_setup(void) {
+//     load_gdt(&_gdt_gdtr);
+//     pic_remap();
+//     initialize_idt();
+//     activate_keyboard_interrupt();
+//     // framebuffer_write_string(1, 0, "among us",0xA,0x0);
+//     framebuffer_clear();
+//     framebuffer_set_cursor(0, 0);
+//     framebuffer_write_string(0, 0, "among us",0xA,0x0);
+//     initialize_filesystem_ext2();
+//     gdt_install_tss();
+//     framebuffer_write_string(2, 0, "among us",0xA,0x0);
+//     set_tss_register();
+//     framebuffer_write_string(3, 0, "among us",0xA,0x0);
+//     // initialize_filesystem_ext2();
+//     // Allocate first 4 MiB virtual memory
+//     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
+
+//     // Write shell into memory
+//     struct EXT2DriverRequest request = {
+//         .buf                   = (uint8_t*) 0,
+//         .name                  = "shell",
+//         .parent_inode          = 2,
+//         .buffer_size           = 0x100000,
+//         .name_len              = 5,
+//     };
+//     read(request);
+
+//     uint8_t* fix_ptr = (uint8_t*) 0x0;
+
+//     if (fix_ptr[4] == 0x08) {
+//         fix_ptr[4] = 0x00;
+//         fix_ptr[5] = 0xEB;
+//     }
+//     // Set TSS $esp pointer and jump into shell 
+//     set_tss_kernel_current_stack();
+//     framebuffer_write_string(4, 0, "among us",0xA,0x0);
+//     kernel_execute_user_program((uint8_t*) 0);
+//     framebuffer_write_string(5, 0, "among us",0xA,0x0);
+//     while (true);
+// }
+
 void kernel_setup(void) {
     load_gdt(&_gdt_gdtr);
     pic_remap();
     initialize_idt();
     activate_keyboard_interrupt();
-    // framebuffer_write_string(1, 0, "among us",0xA,0x0);
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
-    framebuffer_write_string(0, 0, "among us",0xA,0x0);
     initialize_filesystem_ext2();
     gdt_install_tss();
-    framebuffer_write_string(2, 0, "among us",0xA,0x0);
     set_tss_register();
-    framebuffer_write_string(3, 0, "among us",0xA,0x0);
-    // initialize_filesystem_ext2();
-    // Allocate first 4 MiB virtual memory
-    paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
 
-    // Write shell into memory
+    // Shell request
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
         .name                  = "shell",
@@ -66,18 +104,12 @@ void kernel_setup(void) {
         .buffer_size           = 0x100000,
         .name_len              = 5,
     };
-    read(request);
 
-    uint8_t* fix_ptr = (uint8_t*) 0x0;
-
-    if (fix_ptr[4] == 0x08) {
-        fix_ptr[4] = 0x00;
-        fix_ptr[5] = 0xEB;
-    }
-    // Set TSS $esp pointer and jump into shell 
+    // Set TSS.esp0 for interprivilege interrupt
     set_tss_kernel_current_stack();
-    framebuffer_write_string(4, 0, "among us",0xA,0x0);
-    kernel_execute_user_program((uint8_t*) 0);
-    framebuffer_write_string(5, 0, "among us",0xA,0x0);
-    while (true);
+
+    // Create & execute process 0
+    process_create_user_process(request);
+    paging_use_page_directory(_process_list[0].context.page_directory_virtual_addr);
+    kernel_execute_user_program((void*) 0x0);
 }
