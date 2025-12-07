@@ -4,11 +4,8 @@
 #include "header/stdlib/string.h"
 #include "header/filesystem/ext2.h"
 
-
-#define POINTERS_PER_BLOCK (BLOCK_SIZE / sizeof(uint32_t))
 static struct EXT2Superblock superblock;
-static struct EXT2BlockGroupDescriptor bgd;
-
+static struct EXT2BlockGroupDescriptorTable bgdt;
 
 const uint8_t fs_signature[BLOCK_SIZE] = {
     'C', 'o', 'u', 'r', 's', 'e', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',  ' ',
@@ -20,1194 +17,1168 @@ const uint8_t fs_signature[BLOCK_SIZE] = {
     [BLOCK_SIZE-1] = 'k',
 };
 
-/**
- *  REGULAR function
- */
+/* =================== HELPER FUNCTIONS ============================*/
+void commit_metadata(void)
+{
+    struct BlockBuffer buffer;
+    // Update superblock
+    memset(&buffer, 0, sizeof(buffer));
+    memcpy(buffer.buf, &superblock, sizeof(superblock));
+    write_blocks(&buffer, 1, 1);
+    // Update BGDT
+    memset(&buffer, 0, sizeof(buffer));
+    memcpy(buffer.buf, &bgdt, sizeof(bgdt));
+    write_blocks(&buffer, 2, 1);
+}
 
-/**
- * get the name of the entry
- * @param entry the directory entry
- * @return the name of the entry
- */
-
-char *get_entry_name(void *entry) {
-    struct EXT2DirectoryEntry *dir_entry = (struct EXT2DirectoryEntry *) entry;
-    static char buffer[256]; // buffer statis untuk menyimpan nama (maks 255 karakter)
+/* =================== PATH PARSING ============================*/
+// Parse path and return final parent inode and filename
+// Example: "folderA/folderB/file.txt" with parent_inode=2
+//          -> Returns: parent_inode=<folderB's inode>, name="file.txt"
+/* =================== PATH PARSING ============================*/
+// Parse path and return final parent inode and filename
+// Example: "folderA/folderB/file.txt" with parent_inode=2
+//          -> Returns: parent_inode=<folderB's inode>, name="file.txt"
+// bool parse_path_in_kernel(uint32_t start_inode, char *path, uint8_t path_len,
+//                           uint32_t *final_parent_inode, char *final_name, uint8_t *final_name_len)
+// {
+//     uint32_t current_inode = start_inode;
+//     uint32_t i = 0;
     
-    memcpy(buffer, ((uint8_t *)dir_entry) + sizeof(struct EXT2DirectoryEntry), dir_entry->name_len); //nama file dimulai setelah struct EXT2DirectoryEntry
-    buffer[dir_entry->name_len] = '\0'; // tambahkan null terminator
+//     // Handle absolute path
+//     if (path_len > 0 && path[0] == '/') {
+//         current_inode = 2; // Root
+//         i = 1;
+//     }
     
-    return buffer;
-}
-/**
- * get the directory entry from the buffer
- * @param ptr the buffer that contains the directory table
- * @param offset the offset of the entry 
- * @return the directory entry
- */
-struct EXT2DirectoryEntry *get_directory_entry(void *ptr, uint32_t offset){
-    return (struct EXT2DirectoryEntry *) ((uint8_t *)ptr + offset);
-}
+//     // Parse path tokens
+//     while (i < path_len) {
+//         // Extract next token
+//         uint32_t token_start = i;
+//         while (i < path_len && path[i] != '/') {
+//             i++;
+//         }
+//         uint32_t token_len = i - token_start;
+        
+//         // Check if this is the last token
+//         bool is_last = (i >= path_len);
+//         if (!is_last && i + 1 < path_len) {
+//             is_last = false;
+//         } else if (i < path_len && path[i] == '/') {
+//             // Check if there's anything after this '/'
+//             uint32_t j = i + 1;
+//             while (j < path_len && path[j] == '/') j++; // Skip multiple slashes
+//             is_last = (j >= path_len);
+//         }
+        
+//         if (is_last) {
+//             // This is the final filename
+//             *final_parent_inode = current_inode;
+//             *final_name_len = (uint8_t)token_len;
+//             for (uint32_t j = 0; j < token_len; j++) {
+//                 final_name[j] = path[token_start + j];
+//             }
+//             return true;
+//         }
+        
+//         // This is a directory - find it and navigate into it
+//         char token_buf[256];
+//         for (uint32_t j = 0; j < token_len; j++) {
+//             token_buf[j] = path[token_start + j];
+//         }
+        
+//         struct EXT2DirectoryEntry *entry = find_entry_in_dir(current_inode, 
+//                                                               token_buf, 
+//                                                               (uint8_t)token_len);
+//         if (entry == (struct EXT2DirectoryEntry *)0) {
+//             return false; // Directory not found
+//         }
+        
+//         if (entry->file_type != EXT2_FT_DIR) {
+//             return false; // Not a directory
+//         }
+        
+//         current_inode = entry->inode;
+        
+//         // Skip the '/' and any additional slashes
+//         if (i < path_len && path[i] == '/') {
+//             i++;
+//             while (i < path_len && path[i] == '/') i++; // Skip multiple slashes
+//         }
+//     }
+    
+//     // If we reach here, path was all directories with no file
+//     *final_parent_inode = current_inode;
+//     *final_name_len = 0;
+//     return true;
+// }
 
-/**
- * get the next directory entry from the current entry
- * @param entry the current entry
- * @return the next directory entry
- */
-struct EXT2DirectoryEntry *get_next_directory_entry(struct EXT2DirectoryEntry *entry){
-    return (struct EXT2DirectoryEntry *) ((uint8_t *)entry + entry->rec_len);
-}
+// Add this new function after the existing helper functions
+// Add this new function after the existing helper functions
 
-/**
- * get the record length of the entry
- * @param name_len the length of the name of the entry
- * @return the record length of the entry
- */
-uint16_t get_entry_record_len(uint8_t name_len){
-    // di EXT2, setiap entry harus align ke kelipatan 4 byte;
-    // uint32_t = 4 byte, uint16_t = 2 byte, unit8_t * 2 = 2 byte, = 8 byte
-    uint16_t len = 8 + name_len;
-    if (len%4 != 0){
-        len += 4 - (len % 4);
+void build_absolute_path(char *current_path, char *relative_path, char *result_path)
+{
+    // Step 1: Parse current_path into components
+    char components[32][64];
+    uint8_t comp_count = 0;
+
+    // Only parse current_path if it's not just "/"
+    if (!(current_path[0] == '/' && current_path[1] == '\0')) {
+        uint32_t len = 0;
+        while (current_path[len] != '\0') len++;   // <- PAKAI len SEBAGAI INDEX
+
+        uint32_t i = 0;
+        while (i < len && comp_count < 32) {
+            // Skip slashes
+            while (i < len && current_path[i] == '/') i++;
+            if (i >= len) break;
+
+            // Extract component
+            uint32_t start = i;
+            while (i < len && current_path[i] != '/') i++;
+            uint32_t comp_len = i - start;
+
+            // Copy component
+            if (comp_len > 0 && comp_len < 64) {
+                for (uint32_t j = 0; j < comp_len; j++) {
+                    components[comp_count][j] = current_path[start + j];
+                }
+                components[comp_count][comp_len] = '\0';
+                comp_count++;
+            }
+        }
     }
-    return len;
+
+    // Step 2: Process relative_path components
+    uint32_t rel_len = 0;
+    while (relative_path[rel_len] != '\0') rel_len++;  // <- SAMA, PAKAI rel_len
+
+    uint32_t i = 0;
+    while (i < rel_len) {
+        // Skip slashes
+        while (i < rel_len && relative_path[i] == '/') i++;
+        if (i >= rel_len) break;
+
+        // Extract component
+        uint32_t start = i;
+        while (i < rel_len && relative_path[i] != '/') i++;
+        uint32_t comp_len = i - start;
+
+        if (comp_len == 0) continue;
+
+        // Check component type
+        if (comp_len == 2 && relative_path[start] == '.' && relative_path[start+1] == '.') {
+            // ".." - go up
+            if (comp_count > 0) {
+                comp_count--;
+            }
+        } else if (comp_len == 1 && relative_path[start] == '.') {
+            // "." - skip
+        } else {
+            // Regular component - add it
+            if (comp_count < 32 && comp_len < 64) {
+                for (uint32_t j = 0; j < comp_len; j++) {
+                    components[comp_count][j] = relative_path[start + j];
+                }
+                components[comp_count][comp_len] = '\0';
+                comp_count++;
+            }
+        }
+    }
+
+    // Step 3: Build result path
+    if (comp_count == 0) {
+        result_path[0] = '/';
+        result_path[1] = '\0';
+    } else {
+        uint32_t pos = 0;
+        for (uint8_t c = 0; c < comp_count; c++) {
+            result_path[pos++] = '/';
+
+            uint32_t j = 0;
+            while (components[c][j] != '\0' && pos < 255) {
+                result_path[pos++] = components[c][j++];
+            }
+        }
+        result_path[pos] = '\0';
+    }
 }
 
-/**
- * get the offset of the first child of the directory
- * @param ptr the buffer that contains the directory table
- * @return the offset of the first child of the directory
- */
-uint32_t get_dir_first_child_offset(void *ptr){
-    struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)ptr;
-    //skip '.' yang nunjuk ke dirinya sendiri
-    entry = get_next_directory_entry(entry);
 
-    //skip '..' yang nunjuk ke parentnya
-    entry = get_next_directory_entry(entry);
-
-    //entry menunjuk ke first child
-    return (uint32_t)((uint8_t *)entry - (uint8_t*)ptr); //kurangin alamatnya
+int8_t get_resolved_path(struct EXT2DriverRequest request, char *result_path)
+{
+    // request.buf should contain current_path (char*)
+    char *current_path = (char *)request.buf;
+    
+    // Build the new absolute path
+    build_absolute_path(current_path, request.name, result_path);
+    
+    return 0;
+}
+/* =================== PATH RESOLUTION ============================*/
+// Resolve a full path and return the final inode
+// Returns 0 if path doesn't exist
+uint32_t resolve_path(uint32_t start_inode, char *path, uint8_t path_len)
+{
+    if (path_len == 0 || (path_len == 1 && path[0] == '.')) {
+        return start_inode;
+    }
+    
+    uint32_t current_inode = start_inode;
+    uint32_t i = 0;
+    
+    // Handle absolute path
+    if (path_len > 0 && path[0] == '/') {
+        current_inode = 2; // Root
+        i = 1;
+    }
+    
+    // Parse path tokens
+    while (i < path_len) {
+        // Skip multiple slashes
+        while (i < path_len && path[i] == '/') {
+            i++;
+        }
+        
+        if (i >= path_len) {
+            break;
+        }
+        
+        // Extract next token
+        uint32_t token_start = i;
+        while (i < path_len && path[i] != '/') {
+            i++;
+        }
+        uint32_t token_len = i - token_start;
+        
+        if (token_len == 0) {
+            continue;
+        }
+        
+        // Create token buffer
+        char token_buf[256];
+        for (uint32_t j = 0; j < token_len; j++) {
+            token_buf[j] = path[token_start + j];
+        }
+        
+        // Find this directory/file in current inode
+        struct EXT2DirectoryEntry *entry = find_entry_in_dir(current_inode, 
+                                                              token_buf, 
+                                                              (uint8_t)token_len);
+        if (entry == (struct EXT2DirectoryEntry *)0) {
+            return 0; // Not found
+        }
+        
+        current_inode = entry->inode;
+    }
+    
+    return current_inode;
 }
 
 
-/* =================== MAIN FUNCTION OF EXT32 FILESYSTEM ============================*/
+// Update the parse_path_in_kernel function to use resolve_path internally
+bool parse_path_in_kernel(uint32_t start_inode, char *path, uint8_t path_len,
+                          uint32_t *final_parent_inode, char *final_name, uint8_t *final_name_len)
+{
+    uint32_t current_inode = start_inode;
+    uint32_t i = 0;
+    
+    // Handle absolute path
+    if (path_len > 0 && path[0] == '/') {
+        current_inode = 2; // Root
+        i = 1;
+    }
+    
+    // Skip leading slashes
+    while (i < path_len && path[i] == '/') {
+        i++;
+    }
+    
+    if (i >= path_len) {
+        // Path is just "/" or empty
+        *final_parent_inode = current_inode;
+        *final_name_len = 0;
+        return true;
+    }
+    
+    // Parse path tokens
+    while (i < path_len) {
+        // Extract next token
+        uint32_t token_start = i;
+        while (i < path_len && path[i] != '/') {
+            i++;
+        }
+        uint32_t token_len = i - token_start;
+        
+        // Skip trailing slashes
+        while (i < path_len && path[i] == '/') {
+            i++;
+        }
+        
+        // Check if this is the last token
+        bool is_last = (i >= path_len);
+        
+        if (is_last) {
+            // This is the final filename
+            *final_parent_inode = current_inode;
+            *final_name_len = (uint8_t)token_len;
+            for (uint32_t j = 0; j < token_len; j++) {
+                final_name[j] = path[token_start + j];
+            }
+            return true;
+        }
+        
+        // This is a directory - find it and navigate into it
+        char token_buf[256];
+        for (uint32_t j = 0; j < token_len; j++) {
+            token_buf[j] = path[token_start + j];
+        }
+        
+        struct EXT2DirectoryEntry *entry = find_entry_in_dir(current_inode, 
+                                                              token_buf, 
+                                                              (uint8_t)token_len);
+        if (entry == (struct EXT2DirectoryEntry *)0) {
+            return false; // Directory not found
+        }
+        
+        if (entry->file_type != EXT2_FT_DIR) {
+            return false; // Not a directory
+        }
+        
+        current_inode = entry->inode;
+    }
+    
+    // If we reach here, path was all directories with no file
+    *final_parent_inode = current_inode;
+    *final_name_len = 0;
+    return true;
+}
 
-/**
- * @brief get bgd index from inode, inode will starts at index 1
- * @param inode 1 to INODES_PER_GROUP * GROUP_COUNT
- * @return bgd index (0 to GROUP_COUNT - 1)
- */
-uint32_t inode_to_bgd(uint32_t inode){
+
+/* =================== GET INODE OPERATION ============================*/
+// Get inode number for a given path
+int8_t get_inode(struct EXT2DriverRequest request, uint32_t *result_inode)
+{
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request.parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request.name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request.name_len; i++) {
+        if (request.name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request.parent_inode, request.name, request.name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 1; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request.name_len; i++) {
+            final_name[i] = request.name[i];
+        }
+    }
+    
+    // Special cases
+    if (final_name_len == 0 || (final_name_len == 1 && final_name[0] == '.')) {
+        *result_inode = parent_inode;
+        return 0;
+    }
+    
+    // Handle ".."
+    if (final_name_len == 2 && final_name[0] == '.' && final_name[1] == '.') {
+        struct EXT2Inode node;
+        read_inode(parent_inode, &node);
+        
+        if (!(node.i_mode & EXT2_S_IFDIR)) {
+            return 2; // Not a directory
+        }
+        
+        struct BlockBuffer buf;
+        read_blocks(&buf, node.i_block[0], 1);
+        
+        // Second entry is ".."
+        struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)buf.buf;
+        struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)(buf.buf + dot->rec_len);
+        
+        *result_inode = dotdot->inode;
+        return 0;
+    }
+    
+    // Find the entry
+    struct EXT2DirectoryEntry *entry = find_entry_in_dir(parent_inode, final_name, final_name_len);
+    
+    if (entry == (struct EXT2DirectoryEntry *)0) {
+        return 1; // Not found
+    }
+    
+    if (entry->file_type != EXT2_FT_DIR) {
+        return 2; // Not a directory
+    }
+    
+    *result_inode = entry->inode;
+    return 0;
+}
+
+char *get_entry_name(void *entry)
+{
+    return (char *)((struct EXT2DirectoryEntry *)entry + 1);
+}
+
+struct EXT2DirectoryEntry *get_directory_entry(void *ptr, uint32_t offset)
+{
+    return (struct EXT2DirectoryEntry *)((uint8_t *)ptr + offset);
+}
+
+struct EXT2DirectoryEntry *get_next_directory_entry(struct EXT2DirectoryEntry *entry)
+{
+    return (struct EXT2DirectoryEntry *)((uint8_t *)entry + entry->rec_len);
+}
+
+uint16_t get_entry_record_len(uint8_t name_len)
+{
+    uint16_t new_length = 8 + name_len;
+    if (new_length % 4 != 0)
+        new_length += 4 - (new_length % 4);
+    return new_length;
+}
+
+uint32_t get_dir_first_child_offset(void *ptr)
+{
+    uint32_t offset = 0;
+    struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)(ptr + offset);
+    offset += dot->rec_len;
+    struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)(ptr + offset);
+    offset += dotdot->rec_len;
+    return offset;
+}
+
+/* =================== INODE UTILITIES ============================*/
+uint32_t inode_to_bgd(uint32_t inode)
+{
     return (inode - 1) / INODES_PER_GROUP;
 }
 
-/**
- * @brief get inode local index in the corrresponding bgd
- * @param inode 1 to INODES_PER_GROUP * GROUP_COUNT
- * @return local index
- */
-uint32_t inode_to_local(uint32_t inode){
+uint32_t inode_to_local(uint32_t inode)
+{
     return (inode - 1) % INODES_PER_GROUP;
 }
 
-/**
- * @brief create a new directory using given node
- * first item of directory table is its node location (name will be .)
- * second item of directory is its parent location (name will be ..)
- * @param node pointer of inode
- * @param inode inode that already allocated
- * @param parent_inode inode of parent directory (if root directory, the parent is itself)
- */
-void init_directory_table(struct EXT2Inode *node, uint32_t inode, uint32_t parent_inode) {
-    struct BlockBuffer block_buf;                      // bikin buffer 1 blok
-    memset(block_buf.buf, 0, BLOCK_SIZE);              // kosongkan isi blok (isi awal 0 semua)
+/* =================== INODE OPERATIONS ============================*/
+void read_inode(uint32_t inode, struct EXT2Inode *out)
+{
+    if (inode == 0) return;
+    
+    uint32_t max_inode = INODES_PER_GROUP * GROUPS_COUNT;
+    if (inode > max_inode) return;
 
-    // Entry pertama: "."
-    struct EXT2DirectoryEntry *dir_entry = (struct EXT2DirectoryEntry *) block_buf.buf;
-    dir_entry->inode = inode;                          // inode dari direktori ini sendiri
-    dir_entry->name_len = 1;                           // nama "." panjangnya 1
-    dir_entry->rec_len = get_entry_record_len(dir_entry->name_len); // panjang record dibuletin ke 4-byte alignment
-    memcpy(((uint8_t *)dir_entry) + sizeof(struct EXT2DirectoryEntry), ".", dir_entry->name_len);
+    uint32_t bgd_index = inode_to_bgd(inode);
+    uint32_t local_index = inode_to_local(inode);
 
-    // Entry kedua: ".."
-    struct EXT2DirectoryEntry *parent_entry = get_next_directory_entry(dir_entry);
-    parent_entry->inode = parent_inode;                // inode direktori induk
-    parent_entry->name_len = 2;                        // nama ".." panjangnya 2
-    parent_entry->rec_len = BLOCK_SIZE - ((uint8_t *)parent_entry - block_buf.buf); // sisa ruang dalam 1 blok
-    memcpy(((uint8_t *)parent_entry) + sizeof(struct EXT2DirectoryEntry), "..", parent_entry->name_len);
+    struct BlockBuffer inode_buff;
+    uint32_t block_num = bgdt.table[bgd_index].bg_inode_table + (local_index / INODES_PER_TABLE);
+    read_blocks(&inode_buff, block_num, 1);
 
-    // Sekarang tulis isi blok ke disk
-    write_blocks(&block_buf, node->i_block[0], 1);
+    struct EXT2Inode *inode_table = (struct EXT2Inode *)inode_buff.buf;
+    memcpy(out, &inode_table[local_index % INODES_PER_TABLE], sizeof(struct EXT2Inode));
 }
-/**
- * @brief check whether filesystem signature is missing or not in boot sector
- *
- * @return true if memcmp(boot_sector, fs_signature) returning inequality
- */
-bool is_empty_storage(void){
-    struct BlockBuffer boot_sector; 
+
+void write_inode(uint32_t inode_idx, const struct EXT2Inode *inode)
+{
+    uint32_t total_inodes = INODES_PER_GROUP * GROUPS_COUNT;
+    if (inode_idx == 0 || inode_idx > total_inodes) return;
+
+    uint32_t bgd_index = inode_to_bgd(inode_idx);
+    uint32_t local_index = inode_to_local(inode_idx);
+
+    struct BlockBuffer inode_buff;
+    uint32_t block_num = bgdt.table[bgd_index].bg_inode_table + (local_index / INODES_PER_TABLE);
+    read_blocks(&inode_buff, block_num, 1);
+
+    struct EXT2Inode *inode_table = (struct EXT2Inode *)inode_buff.buf;
+    memcpy(&inode_table[local_index % INODES_PER_TABLE], inode, sizeof(struct EXT2Inode));
+
+    write_blocks(&inode_buff, block_num, 1);
+}
+
+/* =================== DIRECTORY INITIALIZATION ============================*/
+void init_directory_table(struct EXT2Inode *node, uint32_t inode, uint32_t parent_inode)
+{
+    struct BlockBuffer bb;
+    memset(&bb, 0, sizeof(bb));
+
+    // Entry 1: "."
+    struct EXT2DirectoryEntry self = {
+        .inode = inode,
+        .rec_len = get_entry_record_len(1),
+        .name_len = 1,
+        .file_type = EXT2_FT_DIR
+    };
+    memcpy(bb.buf, &self, sizeof(self));
+    memcpy(bb.buf + sizeof(self), ".", 1);
+
+    // Entry 2: ".."
+    uint32_t offset = self.rec_len;
+    struct EXT2DirectoryEntry parent = {
+        .inode = parent_inode,
+        .rec_len = BLOCK_SIZE - self.rec_len,
+        .name_len = 2,
+        .file_type = EXT2_FT_DIR
+    };
+    memcpy(bb.buf + offset, &parent, sizeof(parent));
+    memcpy(bb.buf + offset + sizeof(parent), "..", 2);
+
+    write_blocks(&bb, node->i_block[0], 1);
+    node->i_blocks = 1;
+    node->i_size = BLOCK_SIZE;
+}
+
+/* =================== FILESYSTEM INITIALIZATION ============================*/
+bool is_empty_storage(void)
+{
+    struct BlockBuffer boot_sector;
     read_blocks(&boot_sector, BOOT_SECTOR, 1);
     return memcmp(boot_sector.buf, fs_signature, BLOCK_SIZE) != 0;
 }
 
-// Fungsi untuk memeriksa apakah direktori kosong atau tidak
-bool is_directory_empty(uint32_t inode_num) {
-    struct EXT2Inode inode;
-    read_inode(inode_num, &inode);
-    
-    if (!(inode.i_mode & EXT2_S_IFDIR)) {
-        return false; // Bukan direktori
-    }
-    
-    uint8_t block[BLOCK_SIZE];
-    read_blocks(block, inode.i_block[0], 1);
-    
-    // Periksa entri dalam direktori
-    uint32_t offset = 0;
-    int entries = 0;
-    
-    while (offset < BLOCK_SIZE) {
-        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(block + offset);
-        if (entry->inode != 0) {
-            entries++;
-            
-            // Abaikan entri "." dan ".."
-            char entry_name[256];
-            memcpy(entry_name, (uint8_t*)entry + sizeof(struct EXT2DirectoryEntry), entry->name_len);
-            entry_name[entry->name_len] = '\0';
-            
-            // Ganti strcmp dengan pengecekan manual
-            bool is_dot = (entry->name_len == 1 && entry_name[0] == '.');
-            bool is_dotdot = (entry->name_len == 2 && entry_name[0] == '.' && entry_name[1] == '.');
-            
-            if (!(entries <= 2 && (is_dot || is_dotdot))) {
-                return false; // Direktori tidak kosong
-            }
-        }
-        
-        if (entry->rec_len == 0) break;
-        offset += entry->rec_len;
-    }
-    
-    // Direktori kosong jika hanya berisi entri "." dan ".."
-    return entries <= 2;
-}
-
-/**
- * @brief create a new EXT2 filesystem. Will write fs_signature into boot sector,
- * initialize super block, bgd table, block and inode bitmap, and create root directory
- */
-void create_ext2(void) {
+void create_ext2(void)
+{
     struct BlockBuffer buffer;
-    memset(&buffer, 0, sizeof(buffer)); // isi semua buffer dengan 0
 
-    // Tulis filesystem signature di boot sector (tanda storage sudah diformat EXT2)
+    // 1. Write filesystem signature to boot sector
+    memset(&buffer, 0, sizeof(buffer));
     memcpy(buffer.buf, fs_signature, BLOCK_SIZE);
     write_blocks(&buffer, BOOT_SECTOR, 1);
 
-    struct EXT2BlockGroupDescriptorTable BGDT;
-    memset(&BGDT, 0, sizeof(BGDT));
-    BGDT.table[0].bg_block_bitmap  = BLOCK_BITMAP_BLOCK;
-    BGDT.table[0].bg_inode_bitmap  = INODE_BITMAP_BLOCK;
-    BGDT.table[0].bg_inode_table   = INODE_TABLE_BLOCK;
-    BGDT.table[0].bg_free_blocks_count = BLOCKS_TOTAL - DATA_BLOCK_START;
-    BGDT.table[0].bg_free_inodes_count = INODES_TOTAL - 1; // root inode terpakai
-    BGDT.table[0].bg_used_dirs_count   = 1;
-
+    // 2. Initialize Superblock
     memset(&superblock, 0, sizeof(superblock));
-    superblock.s_inodes_count        = INODES_TOTAL;
-    superblock.s_blocks_count        = BLOCKS_TOTAL;
-    superblock.s_r_blocks_count      = 0; // Tidak ada reserved block
-    superblock.s_free_blocks_count   = BGDT.table[0].bg_free_blocks_count;
-    superblock.s_free_inodes_count   = BGDT.table[0].bg_free_inodes_count;
-    superblock.s_first_data_block    = 1;  // Superblock ada di block 1
-    superblock.s_first_ino           = 2;  // Root inode
-    superblock.s_blocks_per_group    = BLOCKS_PER_GROUP;
-    superblock.s_frags_per_group     = BLOCKS_PER_GROUP;
-    superblock.s_inodes_per_group    = INODES_PER_GROUP;
-    superblock.s_magic               = EXT2_SUPER_MAGIC;
-    superblock.s_prealloc_blocks     = 0;
-    superblock.s_prealloc_dir_blocks = 0;
+    superblock.s_inodes_count = INODES_PER_GROUP * GROUPS_COUNT;
+    superblock.s_blocks_count = BLOCKS_PER_GROUP * GROUPS_COUNT;
+    superblock.s_r_blocks_count = 0;
+    superblock.s_free_blocks_count = BLOCKS_PER_GROUP - (5 + INODES_TABLE_BLOCK_COUNT + 1);
+    superblock.s_free_inodes_count = INODES_PER_GROUP - 1;
+    superblock.s_first_data_block = 1;
+    superblock.s_first_ino = 2;
+    superblock.s_blocks_per_group = BLOCKS_PER_GROUP;
+    superblock.s_frags_per_group = BLOCKS_PER_GROUP;
+    superblock.s_inodes_per_group = INODES_PER_GROUP;
+    superblock.s_magic = EXT2_SUPER_MAGIC;
+    superblock.s_prealloc_blocks = 16;
+    superblock.s_prealloc_dir_blocks = 16;
 
-    // Tulis superblock & BGDT ke disk
-    write_blocks(&superblock, SUPERBLOCK_BLOCK, 1);
-    write_blocks(&BGDT, BGDT_BLOCK, 1);
+    // Write superblock to block 1
+    memset(&buffer, 0, sizeof(buffer));
+    memcpy(buffer.buf, &superblock, sizeof(superblock));
+    write_blocks(&buffer, 1, 1);
 
+    // 3. Initialize Block Group Descriptor Table
+    memset(&bgdt, 0, sizeof(bgdt));
+    bgdt.table[0].bg_block_bitmap = 3;
+    bgdt.table[0].bg_inode_bitmap = 4;
+    bgdt.table[0].bg_inode_table = 5;
+    bgdt.table[0].bg_free_blocks_count = BLOCKS_PER_GROUP - (5 + INODES_TABLE_BLOCK_COUNT + 1);
+    bgdt.table[0].bg_free_inodes_count = INODES_PER_GROUP - 1;
+    bgdt.table[0].bg_used_dirs_count = 1;
 
-    struct BlockBuffer bitmap;
-    memset(&bitmap, 0, sizeof(bitmap));
+    // Write BGDT to block 2
+    memset(&buffer, 0, sizeof(buffer));
+    memcpy(buffer.buf, &bgdt, sizeof(bgdt));
+    write_blocks(&buffer, 2, 1);
 
-    // tandai blok sistem (0..DATA_BLOCK_START-1) sudah terpakai
-    for (uint32_t i = 0; i < DATA_BLOCK_START; i++)
-        bitmap.buf[i / 8] |= (1 << (i % 8));
+    // 4. Initialize Block Bitmap (block 3)
+    memset(&buffer, 0, sizeof(buffer));
+    buffer.buf[0] = 0xFF; // blocks 0-7
+    buffer.buf[1] = 0xFF; // blocks 8-15
+    buffer.buf[2] = 0x7F; // blocks 16-22
+    write_blocks(&buffer, 3, 1);
 
-    write_blocks(&bitmap, BLOCK_BITMAP_BLOCK, 1);
+    // 5. Initialize Inode Bitmap (block 4)
+    memset(&buffer, 0, sizeof(buffer));
+    buffer.buf[0] = 0x02; // Inode 2 used
+    write_blocks(&buffer, 4, 1);
 
-    memset(&bitmap, 0, sizeof(bitmap));
-    bitmap.buf[0] |= (1 << 1); // inode #2 (root dir) terpakai
-    write_blocks(&bitmap, INODE_BITMAP_BLOCK, 1);
+    // 6. Initialize Inode Table
+    memset(&buffer, 0, sizeof(buffer));
+    struct EXT2Inode *inode_table = (struct EXT2Inode *)buffer.buf;
 
+    // Root directory is inode 2 (index 1)
+    inode_table[1].i_mode = EXT2_S_IFDIR | 0755;
+    inode_table[1].i_size = BLOCK_SIZE;
+    inode_table[1].i_blocks = BLOCK_SIZE / 512;
+    inode_table[1].i_block[0] = bgdt.table[0].bg_inode_table + INODES_TABLE_BLOCK_COUNT;
 
-    struct EXT2InodeTable inode_table;
-    memset(&inode_table, 0, sizeof(inode_table));
+    for (int i = 1; i < 15; i++) {
+        inode_table[1].i_block[i] = 0;
+    }
 
-    // inode #2 = root directory
-    inode_table.table[1].i_mode   = EXT2_FT_DIR;
-    inode_table.table[1].i_size   = BLOCK_SIZE;
-    inode_table.table[1].i_blocks = 1;
-    inode_table.table[1].i_block[0] = DATA_BLOCK_START;
+    write_blocks(&buffer, bgdt.table[0].bg_inode_table, 1);
 
-    write_blocks(&inode_table, INODE_TABLE_BLOCK, INODE_TABLE_BLOCK_COUNT);
+    // Clear remaining inode table blocks
+    if (INODES_TABLE_BLOCK_COUNT > 1) {
+        memset(&buffer, 0, sizeof(buffer));
+        for (uint32_t i = 1; i < INODES_TABLE_BLOCK_COUNT; i++) {
+            write_blocks(&buffer, bgdt.table[0].bg_inode_table + i, 1);
+        }
+    }
 
+    // 7. Initialize root directory content
+    memset(&buffer, 0, sizeof(buffer));
+    read_blocks(&buffer, bgdt.table[0].bg_inode_table, 1);
+    inode_table = (struct EXT2Inode *)buffer.buf;
+    struct EXT2Inode *root_node = &inode_table[1];
+    init_directory_table(root_node, 2, 2);
+    write_blocks(&buffer, bgdt.table[0].bg_inode_table, 1);
 
-    struct BlockBuffer root_dir;
-    memset(&root_dir, 0, sizeof(root_dir));
+    // 8. Clear data blocks
+    memset(&buffer, 0, sizeof(buffer));
+    uint32_t first_data_block = bgdt.table[0].bg_inode_table + INODES_TABLE_BLOCK_COUNT;
+    uint32_t last_block = BLOCKS_PER_GROUP;
 
-    // Entry untuk "."
-    struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)root_dir.buf;
-    dot->inode = 2;
-    dot->name_len = 1;
-    dot->file_type = EXT2_FT_DIR;
-    dot->rec_len = 12; // ukuran minimum dan align ke 4 byte
-    memcpy(((uint8_t *)dot) + sizeof(struct EXT2DirectoryEntry), ".", 1);
+    for (uint32_t i = first_data_block; i < last_block; i++) {
+        write_blocks(&buffer, i, 1);
+    }
 
-    // Entry untuk ".."
-    struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)((uint8_t *)dot + dot->rec_len);
-    dotdot->inode = 2; // parent = self (root)
-    dotdot->name_len = 2;
-    dotdot->file_type = EXT2_FT_DIR;
-    dotdot->rec_len = BLOCK_SIZE - dot->rec_len; // sisa block
-    memcpy(((uint8_t *)dotdot) + sizeof(struct EXT2DirectoryEntry), "..", 2);
-
-    // Tulis root directory ke data block
-    write_blocks(&root_dir, DATA_BLOCK_START, 1);
+    commit_metadata();
 }
 
-/**
- * @brief Initialize file system driver state, if is_empty_storage() then create_ext2()
- * Else, read and cache super block (located at block 1) and bgd table (located at block 2) into state
- */
-void initialize_filesystem_ext2(void) {
+void initialize_filesystem_ext2(void)
+{
     if (is_empty_storage()) {
         create_ext2();
+    }
+
+    // Read superblock
+    struct BlockBuffer bb;
+    memset(&bb, 0, sizeof(bb));
+    read_blocks(&bb, 1, 1);
+    memcpy(&superblock, bb.buf, sizeof(superblock));
+
+    // Read BGDT
+    memset(&bb, 0, sizeof(bb));
+    read_blocks(&bb, 2, 1);
+    memcpy(&bgdt, bb.buf, sizeof(bgdt));
+}
+
+/* =================== DIRECTORY UTILITIES ============================*/
+bool is_directory_empty(uint32_t inode)
+{
+    struct EXT2Inode node_data;
+    read_inode(inode, &node_data);
+    struct EXT2Inode *node = &node_data;
+
+    struct BlockBuffer dbuff;
+    read_blocks(&dbuff, node->i_block[0], 1);
+
+    struct EXT2DirectoryEntry *first_entry = (struct EXT2DirectoryEntry *)dbuff.buf;
+    uint32_t offset = first_entry->rec_len;
+
+    struct EXT2DirectoryEntry *second_entry = (struct EXT2DirectoryEntry *)(dbuff.buf + offset);
+    offset += second_entry->rec_len;
+
+    struct EXT2DirectoryEntry *third_entry = (struct EXT2DirectoryEntry *)(dbuff.buf + offset);
+    return third_entry->inode == 0;
+}
+
+/* =================== BITMAP OPERATIONS ============================*/
+bool is_block_used(uint32_t block_number)
+{
+    struct BlockBuffer bitmap_buff;
+    read_blocks(&bitmap_buff, bgdt.table[0].bg_block_bitmap, 1);
+
+    uint32_t byte_index = block_number / 8;
+    uint32_t bit_index = block_number % 8;
+
+    return (bitmap_buff.buf[byte_index] & (1 << bit_index)) != 0;
+}
+
+void set_block_used(uint32_t block_number, bool used)
+{
+    struct BlockBuffer bitmap_buff;
+    read_blocks(&bitmap_buff, bgdt.table[0].bg_block_bitmap, 1);
+
+    uint32_t byte_index = block_number / 8;
+    uint32_t bit_index = block_number % 8;
+
+    if (used) {
+        bitmap_buff.buf[byte_index] |= (1 << bit_index);
+        bgdt.table[0].bg_free_blocks_count--;
     } else {
-        struct EXT2Superblock superblock;
-        struct EXT2BlockGroupDescriptorTable bgdt;
-
-        read_blocks(&superblock, SUPERBLOCK_BLOCK, 1);
-        read_blocks(&bgdt, BGDT_BLOCK, 1);
-
-        if (superblock.s_magic != EXT2_SUPER_MAGIC) {
-            // invalid, tapi gak print apa-apa
-        }
+        bitmap_buff.buf[byte_index] &= ~(1 << bit_index);
+        bgdt.table[0].bg_free_blocks_count++;
     }
+
+    write_blocks(&bitmap_buff, bgdt.table[0].bg_block_bitmap, 1);
 }
 
-/**
- * @brief check whether a directory table has children or not
- * @param inode of a directory table
- * @return true if first_child_entry->inode = 0
- */
+bool is_inode_used(uint32_t inode)
+{
+    struct BlockBuffer bitmap_buff;
+    read_blocks(&bitmap_buff, bgdt.table[0].bg_inode_bitmap, 1);
 
-/* =============================== CRUD FUNC ======================================== */
+    uint32_t byte_index = (inode - 1) / 8;
+    uint32_t bit_index = (inode - 1) % 8;
 
-/**
- * @brief EXT2 Folder / Directory read
- * @param request buf point to struct EXT2 Directory
- * @return Error code: 0 success - 1 not a folder - 2 not found - 3 parent folder invalid - -1 unknown
- */
-int8_t read_directory(struct EXT2DriverRequest *request) {
-    struct EXT2Inode parent_inode;
-    read_inode(request->parent_inode, &parent_inode);
-    if (!(parent_inode.i_mode & EXT2_S_IFDIR)) {
-        return -1; // Parent is not a directory
-    }
-
-    // Inisialisasi buffer dan variabel
-    uint8_t* buffer = (uint8_t*)request->buf;
-    uint32_t buffer_offset = 0;
-    uint32_t buffer_size = request->buffer_size;
-    
-    uint8_t block[BLOCK_SIZE];
-    uint32_t entries_found = 0;
-    uint32_t real_entries = 0; // Menghitung entri nyata (bukan . atau ..)
-
-    // Membaca direct blocks (0-11)
-    for (int i = 0; i < 12 && parent_inode.i_block[i] != 0; i++) {
-        read_blocks(block, parent_inode.i_block[i], 1);
-        uint32_t offset = 0;
-
-        while (offset < BLOCK_SIZE) {
-            struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(block + offset);
-            if (entry->inode == 0) {
-                offset += entry->rec_len;
-                continue;
-            }
-
-            // Cek apakah ada cukup ruang di buffer
-            if (buffer_offset + entry->rec_len > buffer_size) {
-                return -2; // Buffer terlalu kecil
-            }
-
-            // Salin seluruh entri direktori termasuk padding
-            memcpy(buffer + buffer_offset, entry, entry->rec_len);
-
-            // Cek apakah ini adalah entri khusus (. atau ..)
-            bool is_special = true;
-            if (entry->name_len == 1 && *((uint8_t*)entry + sizeof(struct EXT2DirectoryEntry)) == '.') {
-                is_special = true;
-            } else if (entry->name_len == 2 && *((uint8_t*)entry + sizeof(struct EXT2DirectoryEntry)) == '.' && *((uint8_t*)entry + sizeof(struct EXT2DirectoryEntry) + 1) == '.') {
-                is_special = true;
-            } else {
-                is_special = false;
-            }
-
-            if (!is_special) {
-                real_entries++; // Hanya hitung entri non-khusus
-            }
-             
-            buffer_offset += entry->rec_len; 
-            entries_found++; 
-            offset += entry->rec_len; 
-        } 
-    }
-
-    // Return berdasarkan ada tidaknya entri nyata
-    return entries_found > 0 ? 0 : 1; // 0 = has files, 1 = empty (only . and ..)
+    return (bitmap_buff.buf[byte_index] & (1 << bit_index)) != 0;
 }
 
-/**
- * @brief EXT2 read, read a file from file system
- * @param request All attribute will be used except is_dir for read, buffer_size will limit reading count
- * @return Error code: 0 success - 1 not a file - 2 not enough buffer - 3 not found - 4 parent folder invalid - -1 unknown
- */
+void set_inode_used(uint32_t inode, bool used)
+{
+    struct BlockBuffer bitmap_buff;
+    read_blocks(&bitmap_buff, bgdt.table[0].bg_inode_bitmap, 1);
 
+    uint32_t byte_index = (inode - 1) / 8;
+    uint32_t bit_index = (inode - 1) % 8;
 
-/**
- * read inode from inode number
- */
-void read_inode(uint32_t inode_idx, struct EXT2Inode *inode_out) {
-    // inisialisasi lokasi inode
-    uint32_t inodes_per_block = BLOCK_SIZE / INODE_SIZE;
-    uint32_t block_offset = inode_idx / inodes_per_block;
-    uint32_t inode_offset = inode_idx % inodes_per_block;
-
-    struct BlockBuffer block_buf = {0};
-    read_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
-
-    memcpy(
-        (void *)inode_out,
-        (void *)(block_buf.buf + inode_offset * INODE_SIZE),
-        sizeof(struct EXT2Inode)
-    );
-}
-
-int8_t read(struct EXT2DriverRequest request) {
-    struct EXT2Inode parent_inode;
-    read_inode(request.parent_inode, &parent_inode);
-
-    if (!(parent_inode.i_mode & EXT2_S_IFDIR)) {
-        return -1; // Parentnya file
-    }
-
-    uint8_t block[BLOCK_SIZE];
-    read_blocks(block, parent_inode.i_block[0], 1);
-
-    uint32_t offset = 0;
-    while (offset < BLOCK_SIZE) {
-
-        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(block + offset);
-        if (entry->inode == 0) {
-            offset += entry->rec_len;
-            continue;
-        }
-
-        char entry_name[256]; // nama file/folder maksimal 255 karakter + null terminator
-        memcpy(entry_name, (void *)entry + sizeof(struct EXT2DirectoryEntry), entry->name_len);
-        entry_name[entry->name_len] = '\0';
-
-        if (entry->name_len == request.name_len && memcmp(entry_name, request.name, request.name_len) == 0) {
-            // File nya ditemukan di direktori parent
-            struct EXT2Inode file_inode;
-            read_inode(entry->inode, &file_inode);
-            if (file_inode.i_mode & EXT2_S_IFDIR) {
-                return 1; // Bukan file
-            }
-
-            if (file_inode.i_size > request.buffer_size) {
-                return -2; // Buffer kecil
-            }
-            uint32_t remaining = file_inode.i_size;
-            uint8_t *buf_ptr = (uint8_t *)request.buf;
-
-            //Baca direct blocks (0-11)
-            for (int i = 0; i < 12 && remaining > 0; i++) {
-                if (file_inode.i_block[i] == 0) break;
-                uint32_t to_read = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-                read_blocks(buf_ptr, file_inode.i_block[i], 1);
-                buf_ptr += to_read;
-                remaining -= to_read;
-            }
-
-            //Baca indirect block tunggal(12)
-            if (remaining > 0 && file_inode.i_block[12] != 0) {
-                uint32_t indirect_block[BLOCK_SIZE / sizeof(uint32_t)];
-                read_blocks((uint8_t*)indirect_block, file_inode.i_block[12], 1);
-
-                for (uint32_t i = 0; i < BLOCK_SIZE / sizeof(uint32_t) && remaining > 0; i++) {
-                    if (indirect_block[i] == 0) break;
-                    uint32_t to_read = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-                    read_blocks(buf_ptr, indirect_block[i], 1);
-                    buf_ptr += to_read;
-                    remaining -= to_read;
-                }
-            }
-
-            // Baca double indirect block (13)
-            if (remaining > 0 && file_inode.i_block[13] != 0) {
-                uint32_t double_indirect_block[BLOCK_SIZE / sizeof(uint32_t)];
-                read_blocks((uint8_t*)double_indirect_block, file_inode.i_block[13], 1);
-
-                for (uint32_t i = 0; i < BLOCK_SIZE / sizeof(uint32_t) && remaining > 0; i++) {
-                    if (double_indirect_block[i] == 0) break;
-
-                    uint32_t indirect_block[BLOCK_SIZE / sizeof(uint32_t)];
-                    read_blocks((uint8_t*)indirect_block, double_indirect_block[i], 1);
-
-                    for (uint32_t j = 0; j < BLOCK_SIZE / sizeof(uint32_t) && remaining > 0; j++) {
-                        if (indirect_block[j] == 0) break;
-                        uint32_t to_read = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-                        read_blocks(buf_ptr, indirect_block[j], 1);
-                        buf_ptr += to_read;
-                        remaining -= to_read;
-                    }
-                }
-            }
-
-            // Baca triple indirect block (14)
-            if (remaining > 0 && file_inode.i_block[14] != 0) {
-                uint32_t triple_indirect_block[BLOCK_SIZE / sizeof(uint32_t)];
-                read_blocks((uint8_t*)triple_indirect_block, file_inode.i_block[14], 1);
-
-                for (uint32_t i = 0; i < BLOCK_SIZE / sizeof(uint32_t) && remaining > 0; i++) {
-                    if (triple_indirect_block[i] == 0) break;
-
-                    uint32_t double_indirect_block[BLOCK_SIZE / sizeof(uint32_t)];
-                    read_blocks((uint8_t*)double_indirect_block, triple_indirect_block[i], 1);
-
-                    for (uint32_t j = 0; j < BLOCK_SIZE / sizeof(uint32_t) && remaining > 0; j++) {
-                        if (double_indirect_block[j] == 0) break;
-
-                        uint32_t indirect_block[BLOCK_SIZE / sizeof(uint32_t)];
-                        read_blocks((uint8_t*)indirect_block, double_indirect_block[j], 1);
-
-                        for (uint32_t k = 0; k < BLOCK_SIZE / sizeof(uint32_t) && remaining > 0; k++) {
-                            if (indirect_block[k] == 0) break;
-                            uint32_t to_read = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-                            read_blocks(buf_ptr, indirect_block[k], 1);
-                            buf_ptr += to_read;
-                            remaining -= to_read;
-                        }
-                    }
-                }
-            }
-            return 0; // Successfully read
-        }
-
-        offset += entry->rec_len;
-    }
-    return 2; // File not found
-}
-
-
-
-/**
- * @brief EXT2 write, write a file or a folder to file system
- *
- * @param All attribute will be used for write except is_dir, buffer_size == 0 then create a folder / directory. It is possible that exist file with name same as a folder
- * @return Error code: 0 success - 1 file/folder already exist - 2 invalid parent folder - -1 unknown
- */
-int8_t write(struct EXT2DriverRequest *request) {
-    //Baca inode parent
-    struct EXT2Inode parent_inode;
-    read_inode(request->parent_inode, &parent_inode);
-    if (!(parent_inode.i_mode & EXT2_S_IFDIR)) {
-        return 2; // Parent tidak valid (bukan directory)
-    }
-
-    // Cek apakah sudah ada entry dengan nama yang sama
-    uint8_t parent_dir_block[BLOCK_SIZE];
-    read_blocks(parent_dir_block, parent_inode.i_block[0], 1);
-    uint32_t offset = 0;
-    while (offset < BLOCK_SIZE) {
-        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(parent_dir_block + offset);
-        if (entry->inode != 0) {
-            if (entry->name_len == request->name_len &&
-                memcmp((uint8_t *)entry + sizeof(struct EXT2DirectoryEntry), request->name, request->name_len) == 0) {
-                return 1; // File or directory already exists
-            }
-        }
-        offset += entry->rec_len;
-    }
-
-    //Alokasikan inode baru
-    uint32_t new_inode_no = allocate_node();
-    if (new_inode_no == 0) return -1;
-
-    struct EXT2Inode new_inode;
-    memset(&new_inode, 0, sizeof(new_inode));
-
-    if (request->buffer_size > 0) {
-        new_inode.i_mode = EXT2_S_IFREG;
-        new_inode.i_size = request->buffer_size;
-        // Hitung jumlah blok yang dibutuhkan (ceil)
-        uint32_t num_blocks = (request->buffer_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        uint32_t remaining_size = request->buffer_size;
-        uint8_t *buf_ptr = (uint8_t *)request->buf;
-        uint32_t written_blocks = 0;
-
-        // Direct Blocks (indeks 0 s/d 11)
-        uint32_t n_direct = (num_blocks > 12) ? 12 : num_blocks;
-        for (uint32_t i = 0; i < n_direct; i++) {
-            uint32_t blk = allocate_block();
-            if (blk == 0) return -1;
-            new_inode.i_block[i] = blk;
-            uint32_t to_write = (remaining_size < BLOCK_SIZE) ? remaining_size : BLOCK_SIZE;
-            write_blocks(buf_ptr, blk, 1);
-            buf_ptr += to_write;
-            remaining_size = (remaining_size > BLOCK_SIZE) ? remaining_size - BLOCK_SIZE : 0;
-            written_blocks++;
-        }
-
-        //Single Indirect Block (indeks 12)
-        if (num_blocks > 12) {
-            uint32_t single_needed = (num_blocks - 12 > POINTERS_PER_BLOCK) ? POINTERS_PER_BLOCK : (num_blocks - 12);
-            uint32_t single_indirect = allocate_block();
-            if (single_indirect == 0) return -1;
-            new_inode.i_block[12] = single_indirect;
-            uint32_t pointers[POINTERS_PER_BLOCK] = {0};
-            for (uint32_t i = 0; i < single_needed; i++) {
-                uint32_t blk = allocate_block();
-                if (blk == 0) return -1;
-                pointers[i] = blk;
-                uint32_t to_write = (remaining_size < BLOCK_SIZE) ? remaining_size : BLOCK_SIZE;
-                write_blocks(buf_ptr, blk, 1);
-                buf_ptr += to_write;
-                remaining_size = (remaining_size > BLOCK_SIZE) ? remaining_size - BLOCK_SIZE : 0;
-                written_blocks++;
-            }
-            write_pointer_block(single_indirect, pointers);
-        }
-
-        //Double Indirect Block (indeks 13)
-        if (num_blocks > (12 + POINTERS_PER_BLOCK)) {
-            uint32_t blocks_left = num_blocks - (12 + POINTERS_PER_BLOCK);
-            uint32_t doubly_indirect = allocate_block();
-            if (doubly_indirect == 0) return -1;
-            new_inode.i_block[13] = doubly_indirect;
-            uint32_t pointerBlock[POINTERS_PER_BLOCK] = {0};
-            for (uint32_t i = 0; i < POINTERS_PER_BLOCK && blocks_left > 0; i++) {
-                uint32_t indirectBlock = allocate_block();
-                if (indirectBlock == 0) return -1;
-                pointerBlock[i] = indirectBlock;
-                uint32_t indirectPointers[POINTERS_PER_BLOCK] = {0};
-                for (uint32_t j = 0; j < POINTERS_PER_BLOCK && blocks_left > 0; j++) {
-                    uint32_t dataBlock = allocate_block();
-                    if (dataBlock == 0) return -1;
-                    indirectPointers[j] = dataBlock;
-                    uint32_t to_write = (remaining_size < BLOCK_SIZE) ? remaining_size : BLOCK_SIZE;
-                    write_blocks(buf_ptr, dataBlock, 1);
-                    buf_ptr += to_write;
-                    remaining_size = (remaining_size > BLOCK_SIZE) ? remaining_size - BLOCK_SIZE : 0;
-                    blocks_left--;
-                    written_blocks++;
-                }
-                write_pointer_block(indirectBlock, indirectPointers);
-            }
-            write_pointer_block(doubly_indirect, pointerBlock);
-        }
-
-        //Triply Indirect Block (indeks 14)
-        if (num_blocks > (12 + POINTERS_PER_BLOCK + POINTERS_PER_BLOCK * POINTERS_PER_BLOCK)) {
-            uint32_t blocks_left = num_blocks - (12 + POINTERS_PER_BLOCK + POINTERS_PER_BLOCK * POINTERS_PER_BLOCK);
-            uint32_t triply_indirect = allocate_block();
-            if (triply_indirect == 0) return -1;
-            new_inode.i_block[14] = triply_indirect;
-            uint32_t pointers_level1[POINTERS_PER_BLOCK] = {0};
-            for (uint32_t i = 0; i < POINTERS_PER_BLOCK && blocks_left > 0; i++) {
-                uint32_t doubly_ind = allocate_block();
-                if (doubly_ind == 0) return -1;
-                pointers_level1[i] = doubly_ind;
-                uint32_t pointers_level2[POINTERS_PER_BLOCK] = {0};
-                for (uint32_t j = 0; j < POINTERS_PER_BLOCK && blocks_left > 0; j++) {
-                    uint32_t single_ind = allocate_block();
-                    if (single_ind == 0) return -1;
-                    pointers_level2[j] = single_ind;
-                    uint32_t pointers_level3[POINTERS_PER_BLOCK] = {0};
-                    for (uint32_t k = 0; k < POINTERS_PER_BLOCK && blocks_left > 0; k++) {
-                        uint32_t dataBlock = allocate_block();
-                        if (dataBlock == 0) return -1;
-                        pointers_level3[k] = dataBlock;
-                        uint32_t to_write = (remaining_size < BLOCK_SIZE) ? remaining_size : BLOCK_SIZE;
-                        write_blocks(buf_ptr, dataBlock, 1);
-                        buf_ptr += to_write;
-                        remaining_size = (remaining_size > BLOCK_SIZE) ? remaining_size - BLOCK_SIZE : 0;
-                        blocks_left--;
-                        written_blocks++;
-                    }
-                    write_pointer_block(single_ind, pointers_level3);
-                }
-                write_pointer_block(doubly_ind, pointers_level2);
-            }
-            write_pointer_block(triply_indirect, pointers_level1);
-        }
+    if (used) {
+        bitmap_buff.buf[byte_index] |= (1 << bit_index);
+        bgdt.table[0].bg_free_inodes_count--;
+        superblock.s_free_inodes_count--;
     } else {
-        // Penanganan untuk direktori
-        new_inode.i_mode = EXT2_S_IFDIR;
-        new_inode.i_size = BLOCK_SIZE;
-        new_inode.i_blocks = 1;
-        uint32_t block_alloc = allocate_block();
-        if (block_alloc == 0) return -1;
-        new_inode.i_block[0] = block_alloc;
-        uint8_t dir_block[BLOCK_SIZE] = {0};
-        uint32_t off = 0;
-        struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)(dir_block + off);
-        dot->inode = new_inode_no;
-        dot->rec_len = 12;
-        dot->name_len = 1;
-        dot->file_type = EXT2_FT_DIR;
-        memcpy((uint8_t *)dot + sizeof(struct EXT2DirectoryEntry), ".", 1);
-        off += dot->rec_len;
-        struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)(dir_block + off);
-        dotdot->inode = request->parent_inode;
-        dotdot->rec_len = BLOCK_SIZE - off;
-        dotdot->name_len = 2;
-        dotdot->file_type = EXT2_FT_DIR;
-        memcpy((uint8_t *)dotdot + sizeof(struct EXT2DirectoryEntry), "..", 2);
-        write_blocks(dir_block, new_inode.i_block[0], 1);
+        bitmap_buff.buf[byte_index] &= ~(1 << bit_index);
+        bgdt.table[0].bg_free_inodes_count++;
+        superblock.s_free_inodes_count++;
     }
 
-    // Simpan inode baru ke disk
-    write_inode(new_inode_no, &new_inode);
-
-    // Tambahkan entri direktori pada parent - ALWAYS APPEND AT END
-    read_blocks(parent_dir_block, parent_inode.i_block[0], 1);
-    
-    // Cari entri valid terakhir
-    uint32_t curr_off = 0;
-    struct EXT2DirectoryEntry *last_valid_entry = NULL;
-    
-    while (curr_off < BLOCK_SIZE) {
-        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(parent_dir_block + curr_off);
-        
-        if (entry->rec_len == 0) break; // Invalid entry
-        
-        if (entry->inode != 0) {
-            last_valid_entry = entry;
-        }
-        
-        curr_off += entry->rec_len;
-        
-        //Break jika sudah melewati batas blok
-        if (curr_off >= BLOCK_SIZE) break;
-    }
-    
-    if (!last_valid_entry) {
-        return -1; // No valid entries found
-    }
-    
-    // Hitung ukuran entry baru
-    uint16_t new_entry_size = 8 + (((request->name_len) + 3) & ~3);
-
-    // Hitung ukuran ideal untuk entry terakhir
-    uint16_t last_ideal_size = 8 + (((last_valid_entry->name_len) + 3) & ~3);
-    if (last_valid_entry->name_len % 4 == 0) {
-        last_ideal_size += 4;
-    }
-    
-    // Hitung ruang yang tersedia setelah mengecilkan entry terakhir
-    uint32_t available_space = last_valid_entry->rec_len - last_ideal_size;
-    
-    if (available_space < new_entry_size) {
-        return -1; // Ruang direktori penuh
-    }
-    
-    // Kecilkan entry terakhir ke ukuran idealnya
-    last_valid_entry->rec_len = last_ideal_size;
-    
-    // Buat entry baru di ruang yang tersedia
-    struct EXT2DirectoryEntry *new_entry = 
-        (struct EXT2DirectoryEntry *)((uint8_t*)last_valid_entry + last_ideal_size);
-    
-    new_entry->inode = new_inode_no;
-    new_entry->rec_len = available_space;
-    new_entry->name_len = request->name_len;
-    new_entry->file_type = request->is_directory ? EXT2_FT_DIR : EXT2_FT_REG_FILE;
-    
-    memcpy((uint8_t *)new_entry + sizeof(struct EXT2DirectoryEntry), 
-           request->name, request->name_len);
-    
-    // Tulis kembali blok direktori parent ke disk
-    write_blocks(parent_dir_block, parent_inode.i_block[0], 1);
-    
-    // Perbarui inode parent (jumlah link bertambah jika direktori)
-    write_inode(request->parent_inode, &parent_inode);
-    
-    return 0; // Success
+    write_blocks(&bitmap_buff, bgdt.table[0].bg_inode_bitmap, 1);
 }
 
-/**
- * @brief EXT2 delete, delete a file or empty directory in file system
- *  @param request buf and buffer_size is unused, is_dir == true means delete folder (possible file with name same as folder)
- * @return Error code: 0 success - 1 not found - 2 folder is not empty - 3 parent folder invalid -1 unknown
- * Subfungsi : free blocks dan free pointer blocks
- */
+uint32_t allocate_block(void)
+{
+    uint32_t first_data_block = bgdt.table[0].bg_inode_table + INODES_TABLE_BLOCK_COUNT;
 
-// Fungsi untuk membebaskan blok yang digunakan oleh file atau direktori
-void free_block(uint32_t block_num) {
-    if (block_num == 0) return;
-    
-    uint8_t bitmap[BLOCK_SIZE];
-    read_blocks(bitmap, 3, 1);
-    
-    uint32_t byte = block_num / 8;
-    uint8_t bit = 1 << (block_num % 8);
-    
-    // Tandai blok sebagai bebas dengan mengatur bit menjadi 0
-    bitmap[byte] &= ~bit;
-    
-    write_blocks(bitmap, 3, 1);
-    
-    // Update superblock untuk mencatat blok bebas tambahan
-    superblock.s_free_blocks_count++;
-}
-
-// Fungsi untuk membebaskan blok-blok pointer (untuk indirect blocks)
-void free_pointer_blocks(uint32_t block_num, int level) {
-    if (block_num == 0) return;
-    
-    uint32_t pointers[POINTERS_PER_BLOCK];
-    read_blocks((uint8_t*)pointers, block_num, 1);
-    
-    // Bebaskan blok-blok data yang ditunjuk
-    for (uint32_t i = 0; i < POINTERS_PER_BLOCK; i++) {
-        if (pointers[i] == 0) continue;
-        
-        if (level > 1) {
-            // Jika level > 1, ini adalah pointer ke pointer lain
-            free_pointer_blocks(pointers[i], level - 1);
-        } else {
-            // Level 1 adalah pointer langsung ke data block
-            free_block(pointers[i]);
-        }
-    }
-    
-    // Bebaskan blok pointer itu sendiri
-    free_block(block_num);
-}
-
- 
-int8_t delete(struct EXT2DriverRequest request) {
-    // Validasi parent inode (harus direktori)
-    struct EXT2Inode parent_inode;
-    read_inode(request.parent_inode, &parent_inode);
-    
-    if (!(parent_inode.i_mode & EXT2_S_IFDIR)) {
-        return -1; // Parent bukan direktori
-    }
-
-    // Cari file/direktori yang akan dihapus di dalam parent
-    uint8_t parent_block[BLOCK_SIZE];
-    read_blocks(parent_block, parent_inode.i_block[0], 1);
-    
-    uint32_t current_offset = 0;
-    // uint32_t prev_offset = 0;
-    struct EXT2DirectoryEntry *current_entry = NULL;
-    struct EXT2DirectoryEntry *prev_entry = NULL;
-    bool found = false;
-    
-    while (current_offset < BLOCK_SIZE) {
-        current_entry = (struct EXT2DirectoryEntry *)(parent_block + current_offset);
-        
-        // Skip entri kosong atau invalid
-        if (current_entry->inode == 0 || current_entry->rec_len == 0) {
-            // prev_offset = current_offset;
-            current_offset += current_entry->rec_len > 0 ? current_entry->rec_len : 8; // Pastikan minimal 8 byte
-            prev_entry = current_entry;
-            continue;
-        }
-        
-        // Ekstrak dan bandingkan nama
-        if (current_entry->name_len == request.name_len) {
-            char entry_name[256];
-            memcpy(entry_name, (uint8_t*)current_entry + sizeof(struct EXT2DirectoryEntry), current_entry->name_len);
-            entry_name[current_entry->name_len] = '\0';
-            
-            if (memcmp(entry_name, request.name, request.name_len) == 0) {
-                found = true;
-                break;
-            }
-        }
-        
-        // prev_offset = current_offset;
-        current_offset += current_entry->rec_len;
-        prev_entry = current_entry;
-    }
-    
-    if (!found) {
-        return 1; // Entry tidak ditemukan
-    }
-    
-    // Baca inode dari file/direktori yang akan dihapus
-    uint32_t target_inode_num = current_entry->inode;
-    struct EXT2Inode target_inode;
-    read_inode(target_inode_num, &target_inode);
-    
-    //Jika ini adalah direktori, pastikan kosong
-    if (target_inode.i_mode & EXT2_S_IFDIR) {
-        if (!is_directory_empty(target_inode_num)) {
-            return 2; // Folder tidak kosong
-        }
-    }
-
-    // Bebaskan blok yang digunakan oleh file/direktori
-
-    //Bebaskan direct blocks
-    for (int i = 0; i < 12; i++) {
-        if (target_inode.i_block[i] != 0) {
-            free_block(target_inode.i_block[i]);
-        }
-    }
-    
-    // Bebaskan single indirect block
-    if (target_inode.i_block[12] != 0) {
-        free_pointer_blocks(target_inode.i_block[12], 1);
-    }
-
-    // Bebaskan double indirect block
-    if (target_inode.i_block[13] != 0) {
-        free_pointer_blocks(target_inode.i_block[13], 2);
-    }
-
-    // Bebaskan triple indirect block
-    if (target_inode.i_block[14] != 0) {
-        free_pointer_blocks(target_inode.i_block[14], 3);
-    }
-    
-    // Tandai inode sebagai tidak terpakai
-    uint8_t inode_bitmap[BLOCK_SIZE];
-    read_blocks(inode_bitmap, 4, 1); // Asumsi bitmap inode di blok 4
-    
-    uint32_t inode_byte = target_inode_num / 8;
-    uint8_t inode_bit = 1 << (target_inode_num % 8);
-    inode_bitmap[inode_byte] &= ~inode_bit;
-    
-    write_blocks(inode_bitmap, 4, 1);
-    
-    // Update directory entry untuk menghapus referensi
-    
-
-    if (current_offset == 0) {
-        current_entry->inode = 0; 
-    } 
-    else if (current_offset + current_entry->rec_len >= BLOCK_SIZE) {
-        if (prev_entry) {
-            prev_entry->rec_len += current_entry->rec_len;
-        }
-    } 
-    else {
-        current_entry->inode = 0;   
-    }
-
-    //Tulis blok direktori yang telah dimodifikasi
-    write_blocks(parent_block, parent_inode.i_block[0], 1);
-
-    // Update superblock dan bgd
-    superblock.s_free_inodes_count++;
-    bgd.bg_free_inodes_count++;
-    
-    if (target_inode.i_mode & EXT2_S_IFDIR) {
-        bgd.bg_used_dirs_count--;
-    }
-
-    // Tulis kembali superblock dan bgd
-    write_blocks(&superblock, 1, 1);
-    write_blocks(&bgd, 2, 1);
-    
-    return 0; // Operasi berhasil
-}
-
-/* =============================== MEMORY ==========================================*/
-
-/**
- * @brief get a free inode from the disk, assuming it is always
- * available
- * @return new inode
- */
-uint32_t allocate_node(void) {
-    uint8_t bitmap[BLOCK_SIZE];
-    read_blocks(bitmap, 4, 1); // Inode bitmap block
-    
-    // Find first free inode
-    for (uint32_t i = 0; i < superblock.s_inodes_count; i++) {
-        uint32_t byte = i / 8;
-        uint8_t bit = 1 << (i % 8);
-        if (!(bitmap[byte] & bit)) {
-            // Mark as used
-            bitmap[byte] |= bit;
-            write_blocks(bitmap, 4, 1);
-            // Update superblock
-            superblock.s_free_inodes_count--;
-            write_blocks(&superblock, 1, 1);
-            // return inode number (1-based)
-            return i + 1;
-        }
-    }
-    return 0; // No free inodes
-}
-
-/**
- * @brief deallocate node from the disk, will also deallocate its used blocks
- * also all of the blocks of indirect blocks if necessary
- * @param inode that needs to be deallocated
- */
-void deallocate_node(uint32_t inode_num) {
-    if (inode_num == 0) return;
-
-    struct EXT2Inode inode;
-    read_inode(inode_num, &inode);
-
-    //bebaskan direct blocks 
-    for (int i = 0; i < 12; i++) {
-        if (inode.i_block[i] != 0) free_block(inode.i_block[i]);
-    }
-
-    //single, double, triple indirect 
-    if (inode.i_block[12] != 0) free_pointer_blocks(inode.i_block[12], 1);
-    if (inode.i_block[13] != 0) free_pointer_blocks(inode.i_block[13], 2);
-    if (inode.i_block[14] != 0) free_pointer_blocks(inode.i_block[14], 3);
-
-    // clear inode on disk 
-    struct EXT2Inode zero = {0};
-    write_inode(inode_num, &zero);
-
-    // update inode bitmap (as in delete)
-    uint8_t inode_bitmap[BLOCK_SIZE];
-    read_blocks(inode_bitmap, INODE_BITMAP_BLOCK, 1);
-    uint32_t byte = (inode_num - 1) / 8; /* if bitmap indexed from inode 1 */
-    uint8_t bit = 1 << ((inode_num - 1) % 8);
-    inode_bitmap[byte] &= ~bit;
-    write_blocks(inode_bitmap, INODE_BITMAP_BLOCK, 1);
-
-    // update counters
-    superblock.s_free_inodes_count++;
-    bgd.bg_free_inodes_count++;
-    write_blocks(&superblock, SUPERBLOCK_BLOCK, 1);
-    write_blocks(&bgd, BGDT_BLOCK, 1);
-}
-
-/**
- * @brief deallocate node blocks
- * @param locations node->block
- * @param blocks number of blocks
- */
-void deallocate_blocks(void *loc, uint32_t blocks) {
-    uint32_t *locations = (uint32_t *)loc;
-    for (uint32_t i = 0; i < blocks; i++) {
-        if (locations[i] != 0) free_block(locations[i]);
-    }
-}
-
-/**
- * @brief deallocate block from the disk
- * @param locations block locations
- * @param blocks number of blocks
- * @param bitmap block bitmap
- * @param depth depth of the block
- * @param last_bgd last bgd that is used
- * @param bgd_loaded whether bgd is loaded or not
- * @return new last bgd
- */
-uint32_t deallocate_block(uint32_t *locations, uint32_t blocks, struct BlockBuffer *bitmap, uint32_t depth, uint32_t *last_bgd, bool bgd_loaded) {
-    if (!locations || blocks == 0) return last_bgd ? *last_bgd : 0;
-
-    for (uint32_t i = 0; i < blocks; i++) {
-        uint32_t loc = locations[i];
-        if (loc == 0) continue;
-
-        if (depth > 1) {
-            /* loc is a pointer block: read pointers and recurse */
-            uint32_t pointers[POINTERS_PER_BLOCK];
-            read_blocks((uint8_t*)pointers, loc, 1);
-            deallocate_block(pointers, POINTERS_PER_BLOCK, bitmap, depth - 1, last_bgd, bgd_loaded);
-        }
-
-        /* Clear bitmap bit for this block */
-        if (bitmap) {
-            uint32_t byte = loc / 8;
-            uint8_t bit = 1 << (loc % 8);
-            bitmap->buf[byte] &= ~bit;
-            write_blocks(bitmap, BLOCK_BITMAP_BLOCK, 1);
-        } else {
-            uint8_t bm[BLOCK_SIZE];
-            read_blocks(bm, BLOCK_BITMAP_BLOCK, 1);
-            uint32_t byte = loc / 8;
-            uint8_t bit = 1 << (loc % 8);
-            bm[byte] &= ~bit;
-            write_blocks(bm, BLOCK_BITMAP_BLOCK, 1);
-        }
-
-        /* Update superblock counters */
-        superblock.s_free_blocks_count++;
-    }
-
-    /* return last_bgd unchanged for now */
-    if (last_bgd) return *last_bgd;
-    return 0;
-}
-/**
- * @brief write node->block in the given node, will allocate
- * at least node->blocks number of blocks, if first 12 item of node-> block
- * is not enough, will use indirect blocks
- * @param ptr the buffer that needs to be written
- * @param node pointer of the node
- * @param preffered_bgd it is located at the node inode bgd
- * 
- * @attention only implement until doubly indirect block, if you want to implement triply indirect block please increase the storage size to at least 256MB
- */
-void write_pointer_block(uint32_t block, uint32_t *pointers) {
-    write_blocks(pointers, block, 1);
-}
-
-// void allocate_node_blocks(void *ptr, struct EXT2Inode *node, uint32_t prefered_bgd) {
-//     if (!node) return;
-
-//     uint32_t num_blocks = (node->i_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-//     uint32_t remaining = node->i_size;
-//     uint8_t *data = (uint8_t *)ptr;
-//     uint32_t written = 0;
-
-//     /* Direct blocks (0..11) */
-//     uint32_t n_direct = (num_blocks > 12) ? 12 : num_blocks;
-//     for (uint32_t i = 0; i < n_direct; i++) {
-//         uint32_t blk = allocate_block();
-//         if (blk == 0) return; // tidak cukup ruang
-//         node->i_block[i] = blk;
-//         uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-//         write_blocks(data, blk, 1);
-//         data += to_write;
-//         remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
-//         written++;
-//     }
-
-//     /* Single indirect (index 12) */
-//     if (written < num_blocks) {
-//         uint32_t need = num_blocks - written;
-//         uint32_t to_fill = (need > POINTERS_PER_BLOCK) ? POINTERS_PER_BLOCK : need;
-//         uint32_t single = allocate_block();
-//         if (single == 0) return;
-//         node->i_block[12] = single;
-//         uint32_t pointers[POINTERS_PER_BLOCK];
-//         for (uint32_t i = 0; i < POINTERS_PER_BLOCK; i++) pointers[i] = 0;
-
-//         for (uint32_t i = 0; i < to_fill; i++) {
-//             uint32_t blk = allocate_block();
-//             if (blk == 0) return;
-//             pointers[i] = blk;
-//             uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-//             write_blocks(data, blk, 1);
-//             data += to_write;
-//             remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
-//             written++;
-//         }
-//         write_pointer_block(single, pointers);
-//     }
-
-//     /* Double indirect (index 13) */
-//     if (written < num_blocks) {
-//         uint32_t blocks_left = num_blocks - written;
-//         uint32_t doubly = allocate_block();
-//         if (doubly == 0) return;
-//         node->i_block[13] = doubly;
-//         uint32_t first_level[POINTERS_PER_BLOCK];
-//         for (uint32_t i = 0; i < POINTERS_PER_BLOCK; i++) first_level[i] = 0;
-
-//         for (uint32_t i = 0; i < POINTERS_PER_BLOCK && blocks_left > 0; i++) {
-//             uint32_t indirect = allocate_block();
-//             if (indirect == 0) return;
-//             first_level[i] = indirect;
-//             uint32_t second_level[POINTERS_PER_BLOCK];
-//             for (uint32_t j = 0; j < POINTERS_PER_BLOCK; j++) second_level[j] = 0;
-
-//             for (uint32_t j = 0; j < POINTERS_PER_BLOCK && blocks_left > 0; j++) {
-//                 uint32_t data_blk = allocate_block();
-//                 if (data_blk == 0) return;
-//                 second_level[j] = data_blk;
-//                 uint32_t to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
-//                 write_blocks(data, data_blk, 1);
-//                 data += to_write;
-//                 remaining = (remaining > BLOCK_SIZE) ? remaining - BLOCK_SIZE : 0;
-//                 blocks_left--;
-//                 written++;
-//             }
-//             write_pointer_block(indirect, second_level);
-//         }
-//         write_pointer_block(doubly, first_level);
-//     }
-
-//     /* Triply indirect not implemented here (comment in header) */
-
-//     /* Update i_blocks (count of 512-byte sectors? here count blocks as BLOCK_SIZE units) */
-//     node->i_blocks = written; // simple block count; adjust if you count 512-byte sectors
-// }
-/**
- * @brief update the node to the disk
- * @param node pointer of node
- * @param inode location of the node
- */
-void sync_node(struct EXT2Inode *node, uint32_t inode) {
-    if (!node || inode == 0) return;
-
-    uint32_t inodes_per_block = BLOCK_SIZE / INODE_SIZE;
-    uint32_t block_offset = (inode - 1) / inodes_per_block;
-    uint32_t inode_offset = (inode - 1) % inodes_per_block;
-
-    struct BlockBuffer blk = {0};
-    read_blocks(&blk, INODE_TABLE_BLOCK + block_offset, 1);
-
-    memcpy(blk.buf + inode_offset * INODE_SIZE, node, sizeof(struct EXT2Inode));
-    write_blocks(&blk, INODE_TABLE_BLOCK + block_offset, 1);
-}
-
-
-void write_inode(uint32_t inode_idx, struct EXT2Inode *inode) {
-    uint32_t inodes_per_block = BLOCK_SIZE / INODE_SIZE;
-    uint32_t block_offset = inode_idx / inodes_per_block;
-    uint32_t inode_offset = inode_idx % inodes_per_block;
-
-    struct BlockBuffer block_buf = {0};
-    read_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
-
-    memcpy(
-        (void *)(block_buf.buf + inode_offset * INODE_SIZE),
-        (void *)inode,
-        sizeof(struct EXT2Inode)
-    );
-
-    write_blocks(&block_buf, INODE_TABLE_BLOCK + block_offset, 1);
-}
-uint32_t allocate_block(void) {
-    uint8_t bitmap[BLOCK_SIZE];
-    read_blocks(bitmap, 3, 1);
-    for (uint32_t i = 0; i < superblock.s_blocks_count; i++) {
-        uint32_t byte = i / 8;
-        uint8_t bit = 1 << (i % 8);
-        if (!(bitmap[byte] & bit)) {
-            bitmap[byte] |= bit;
-            write_blocks(bitmap, 3, 1);
+    for (uint32_t i = first_data_block; i < BLOCKS_PER_GROUP; i++) {
+        if (!is_block_used(i)) {
+            set_block_used(i, true);
             return i;
         }
     }
-    return 0; // Tidak ada block free
+    return 0;
+}
+
+uint32_t allocate_node(void)
+{
+    for (uint32_t i = 1; i <= INODES_PER_GROUP; i++) {
+        if (!is_inode_used(i)) {
+            set_inode_used(i, true);
+            return i;
+        }
+    }
+    return 0;
+}
+
+/* =================== DIRECTORY ENTRY OPERATIONS ============================*/
+struct EXT2DirectoryEntry *find_entry_in_dir(uint32_t dir_inode, char *name, uint8_t name_len)
+{
+    struct EXT2Inode dir_node;
+    read_inode(dir_inode, &dir_node);
+
+    if (!(dir_node.i_mode & EXT2_S_IFDIR)) {
+        return (struct EXT2DirectoryEntry *)0;
+    }
+
+    struct BlockBuffer dir_buff;
+    read_blocks(&dir_buff, dir_node.i_block[0], 1);
+
+    uint32_t offset = 0;
+    while (offset < BLOCK_SIZE) {
+        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(dir_buff.buf + offset);
+
+        if (entry->rec_len == 0) break;
+
+        if (entry->inode != 0 && entry->name_len == name_len) {
+            char *entry_name = get_entry_name(entry);
+            if (memcmp(entry_name, name, name_len) == 0) {
+                return entry;
+            }
+        }
+
+        offset += entry->rec_len;
+    }
+
+    return (struct EXT2DirectoryEntry *)0;
+}
+
+/* =================== READ OPERATIONS ============================*/
+int8_t read(struct EXT2DriverRequest request)
+{
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request.parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request.name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request.name_len; i++) {
+        if (request.name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request.parent_inode, request.name, request.name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 3; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request.name_len; i++) {
+            final_name[i] = request.name[i];
+        }
+    }
+    
+    // Validate parent
+    struct EXT2Inode parent_node;
+    read_inode(parent_inode, &parent_node);
+
+    if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
+        return 4;
+    }
+
+    // Find entry with parsed name
+    struct EXT2DirectoryEntry *entry = find_entry_in_dir(parent_inode, final_name, final_name_len);
+
+    if (entry == (struct EXT2DirectoryEntry *)0) {
+        return 3;
+    }
+
+    if (entry->file_type != EXT2_FT_REG_FILE) {
+        return 1;
+    }
+
+    struct EXT2Inode file_node;
+    read_inode(entry->inode, &file_node);
+
+    if (request.buffer_size < file_node.i_size) {
+        return 2;
+    }
+
+    uint32_t bytes_read = 0;
+    uint32_t blocks_to_read = (file_node.i_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    for (uint32_t i = 0; i < blocks_to_read && i < 12; i++) {
+        if (file_node.i_block[i] == 0) break;
+
+        struct BlockBuffer block_buff;
+        read_blocks(&block_buff, file_node.i_block[i], 1);
+
+        uint32_t bytes_to_copy = BLOCK_SIZE;
+        if (bytes_read + bytes_to_copy > file_node.i_size) {
+            bytes_to_copy = file_node.i_size - bytes_read;
+        }
+
+        memcpy((uint8_t *)request.buf + bytes_read, block_buff.buf, bytes_to_copy);
+        bytes_read += bytes_to_copy;
+    }
+
+    return 0;
+}
+int8_t read_directory(struct EXT2DriverRequest *request)
+{
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request->parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request->name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request->name_len; i++) {
+        if (request->name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request->parent_inode, request->name, request->name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 2; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request->name_len; i++) {
+            final_name[i] = request->name[i];
+        }
+    }
+    
+    struct EXT2Inode parent_node;
+    read_inode(parent_inode, &parent_node);
+
+    if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
+        return 3;
+    }
+
+    // If name is empty or ".", read the parent_inode itself
+    if (final_name_len == 0 || 
+        (final_name_len == 1 && final_name[0] == '.')) {
+        struct BlockBuffer dir_buff;
+        read_blocks(&dir_buff, parent_node.i_block[0], 1);
+        memcpy(request->buf, dir_buff.buf, BLOCK_SIZE);
+        return 0;
+    }
+
+    struct EXT2DirectoryEntry *entry = find_entry_in_dir(parent_inode, final_name, final_name_len);
+
+    if (entry == (struct EXT2DirectoryEntry *)0) {
+        return 2;
+    }
+
+    if (entry->file_type != EXT2_FT_DIR) {
+        return 1;
+    }
+
+    struct EXT2Inode dir_node;
+    read_inode(entry->inode, &dir_node);
+
+    struct BlockBuffer dir_buff;
+    read_blocks(&dir_buff, dir_node.i_block[0], 1);
+
+    memcpy(request->buf, dir_buff.buf, BLOCK_SIZE);
+
+    return 0;
+}
+/* =================== WRITE OPERATIONS ============================*/
+int8_t write(struct EXT2DriverRequest *request)
+{
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request->parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request->name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request->name_len; i++) {
+        if (request->name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request->parent_inode, request->name, request->name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 2; // Parent path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request->name_len; i++) {
+            final_name[i] = request->name[i];
+        }
+    }
+    
+    // 1. Validate parent inode
+    struct EXT2Inode parent_node;
+    read_inode(parent_inode, &parent_node);
+    if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
+        return 2;
+    }
+
+    // 2. Check if entry already exists
+    struct EXT2DirectoryEntry *existing = find_entry_in_dir(parent_inode, final_name, final_name_len);
+    if (existing != (struct EXT2DirectoryEntry *)0) {
+        return 1;
+    }
+
+    // 3. Allocate new inode
+    uint32_t new_inode = allocate_node();
+    if (new_inode == 0) {
+        return -1;
+    }
+
+    struct EXT2Inode new_node;
+    memset(&new_node, 0, sizeof(new_node));
+
+    if (request->is_directory) {
+        // Create directory
+        new_node.i_mode = EXT2_S_IFDIR | 0755;
+        new_node.i_size = BLOCK_SIZE;
+        new_node.i_blocks = BLOCK_SIZE / 512;
+
+        uint32_t dir_block = allocate_block();
+        if (dir_block == 0) {
+            set_inode_used(new_inode, false);
+            return -1;
+        }
+
+        new_node.i_block[0] = dir_block;
+        init_directory_table(&new_node, new_inode, parent_inode);
+
+        bgdt.table[0].bg_used_dirs_count++;
+    } else {
+        // Create file
+        new_node.i_mode = EXT2_S_IFREG | 0644;
+        new_node.i_size = request->buffer_size;
+
+        uint32_t blocks_needed = (request->buffer_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        if (blocks_needed > 12) blocks_needed = 12;
+        new_node.i_blocks = blocks_needed * (BLOCK_SIZE / 512);
+
+        uint32_t bytes_written = 0;
+        for (uint32_t i = 0; i < blocks_needed; i++) {
+            uint32_t block_num = allocate_block();
+            if (block_num == 0) {
+                for (uint32_t j = 0; j < i; j++)
+                    set_block_used(new_node.i_block[j], false);
+                set_inode_used(new_inode, false);
+                return -1;
+            }
+
+            new_node.i_block[i] = block_num;
+
+            struct BlockBuffer write_buff;
+            memset(&write_buff, 0, sizeof(write_buff));
+
+            uint32_t bytes_to_write = BLOCK_SIZE;
+            if (bytes_written + bytes_to_write > request->buffer_size)
+                bytes_to_write = request->buffer_size - bytes_written;
+
+            memcpy(write_buff.buf, (uint8_t *)request->buf + bytes_written, bytes_to_write);
+            write_blocks(&write_buff, block_num, 1);
+            bytes_written += bytes_to_write;
+        }
+    }
+
+    // 4. Write new inode
+    write_inode(new_inode, &new_node);
+
+    // 5. Add entry to parent directory
+    struct BlockBuffer parent_buff;
+    read_blocks(&parent_buff, parent_node.i_block[0], 1);
+
+    uint32_t offset = 0;
+    struct EXT2DirectoryEntry *last_entry = (struct EXT2DirectoryEntry *)0;
+
+    while (offset < BLOCK_SIZE) {
+        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(parent_buff.buf + offset);
+        if (entry->rec_len == 0) break;
+        last_entry = entry;
+        offset += entry->rec_len;
+    }
+
+    uint16_t new_rec_len = get_entry_record_len(final_name_len);
+    if (last_entry != (struct EXT2DirectoryEntry *)0) {
+        uint16_t actual_last_len = get_entry_record_len(last_entry->name_len);
+        uint16_t available_space = last_entry->rec_len - actual_last_len;
+        if (available_space >= new_rec_len) {
+            last_entry->rec_len = actual_last_len;
+            offset = ((uint8_t *)last_entry - parent_buff.buf) + actual_last_len;
+        }
+    }
+
+    struct EXT2DirectoryEntry *new_entry = (struct EXT2DirectoryEntry *)(parent_buff.buf + offset);
+    new_entry->inode = new_inode;
+    new_entry->rec_len = BLOCK_SIZE - offset;
+    new_entry->name_len = final_name_len;
+    new_entry->file_type = request->is_directory ? EXT2_FT_DIR : EXT2_FT_REG_FILE;
+    memcpy(get_entry_name(new_entry), final_name, final_name_len);
+
+    write_blocks(&parent_buff, parent_node.i_block[0], 1);
+    commit_metadata();
+
+    return 0;
+}
+/* =================== DELETE OPERATIONS ============================*/
+int8_t delete(struct EXT2DriverRequest request)
+{
+    // Parse path if it contains '/'
+    uint32_t parent_inode = request.parent_inode;
+    char final_name[256];
+    uint8_t final_name_len = request.name_len;
+    
+    // Check if path contains '/'
+    bool has_path = false;
+    for (uint8_t i = 0; i < request.name_len; i++) {
+        if (request.name[i] == '/') {
+            has_path = true;
+            break;
+        }
+    }
+    
+    if (has_path) {
+        if (!parse_path_in_kernel(request.parent_inode, request.name, request.name_len,
+                                  &parent_inode, final_name, &final_name_len)) {
+            return 1; // Path not found
+        }
+    } else {
+        // Simple case: copy name as-is
+        for (uint8_t i = 0; i < request.name_len; i++) {
+            final_name[i] = request.name[i];
+        }
+    }
+    
+    struct EXT2Inode parent_node;
+    read_inode(parent_inode, &parent_node);
+
+    if (!(parent_node.i_mode & EXT2_S_IFDIR)) {
+        return 3;
+    }
+
+    struct BlockBuffer parent_buff;
+    read_blocks(&parent_buff, parent_node.i_block[0], 1);
+
+    uint32_t offset = 0;
+    struct EXT2DirectoryEntry *prev_entry = (struct EXT2DirectoryEntry *)0;
+    struct EXT2DirectoryEntry *target_entry = (struct EXT2DirectoryEntry *)0;
+
+    while (offset < BLOCK_SIZE) {
+        struct EXT2DirectoryEntry *entry = (struct EXT2DirectoryEntry *)(parent_buff.buf + offset);
+
+        if (entry->rec_len == 0) break;
+
+        if (entry->inode != 0 && entry->name_len == final_name_len) {
+            char *entry_name = get_entry_name(entry);
+            if (memcmp(entry_name, final_name, final_name_len) == 0) {
+                target_entry = entry;
+                break;
+            }
+        }
+
+        prev_entry = entry;
+        offset += entry->rec_len;
+    }
+
+    if (target_entry == (struct EXT2DirectoryEntry *)0) {
+        return 1;
+    }
+
+    struct EXT2Inode target_node;
+    read_inode(target_entry->inode, &target_node);
+
+    if (target_node.i_mode & EXT2_S_IFDIR) {
+        if (!is_directory_empty(target_entry->inode)) {
+            return 2;
+        }
+        bgdt.table[0].bg_used_dirs_count--;
+    }
+
+    // Free all blocks
+    for (uint32_t i = 0; i < 12; i++) {
+        if (target_node.i_block[i] != 0) {
+            set_block_used(target_node.i_block[i], false);
+        }
+    }
+
+    // Free the inode
+    set_inode_used(target_entry->inode, false);
+
+    // Remove entry from directory
+    if (prev_entry != (struct EXT2DirectoryEntry *)0) {
+        // Not the first entry - merge with previous
+        prev_entry->rec_len += target_entry->rec_len;
+    } else {
+        // First entry - mark as deleted
+        target_entry->inode = 0;
+    }
+
+    // Write updated directory back
+    write_blocks(&parent_buff, parent_node.i_block[0], 1);
+    commit_metadata();
+
+    return 0;
 }
