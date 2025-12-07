@@ -1,12 +1,13 @@
 # Compiler & linker
-ASM           = nasm
-LIN           = ld
-CC            = gcc
+ASM     = nasm
+CC      = gcc
+LD      = ld
 
 # Directory
 SOURCE_FOLDER = src
 OUTPUT_FOLDER = bin
 ISO_NAME      = OS2025
+DISK_NAME     = storage
 
 # Flags
 WARNING_CFLAG = -Wall -Wextra -Werror
@@ -16,19 +17,23 @@ CFLAGS        = $(DEBUG_CFLAG) $(WARNING_CFLAG) $(STRIP_CFLAG) -m32 -c -I$(SOURC
 AFLAGS        = -f elf32 -g -F dwarf
 LFLAGS        = -T $(SOURCE_FOLDER)/linker.ld -melf_i386
 
-
-run: all
-	@qemu-system-i386 -s -S -cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso
-all: build
+# Target rules
+all: run
 build: iso
-clean:
-	rm -rf *.o *.iso $(OUTPUT_FOLDER)/kernel
 
+disk:
+	@mkdir -p $(OUTPUT_FOLDER)
+	@qemu-img create -f raw $(OUTPUT_FOLDER)/$(DISK_NAME).bin 4M
+
+run: iso disk
+	@echo "Running OS in QEMU..."
+	@qemu-system-i386 -s -drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk -cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso
 
 kernel:
+	@mkdir -p $(OUTPUT_FOLDER)
+	@echo "Compiling assembly and C files..."
 	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/kernel-entrypoint.s -o $(OUTPUT_FOLDER)/kernel-entrypoint.o
 	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/intsetup.s -o $(OUTPUT_FOLDER)/intsetup.o
-# TODO: Compile C file with CFLAGS
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/kernel.c -o $(OUTPUT_FOLDER)/kernel.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cpu/gdt.c -o $(OUTPUT_FOLDER)/gdt.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/stdlib/string.c -o $(OUTPUT_FOLDER)/string.o
@@ -37,15 +42,41 @@ kernel:
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cpu/idt.c -o $(OUTPUT_FOLDER)/idt.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cpu/interrupt.c -o $(OUTPUT_FOLDER)/interrupt.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/driver/keyboard.c -o $(OUTPUT_FOLDER)/keyboard.o
-	@$(LIN) $(LFLAGS) bin/*.o -o $(OUTPUT_FOLDER)/kernel
-	@echo Linking object files and generate elf32...
-	@rm -f *.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/ext2.c -o $(OUTPUT_FOLDER)/ext2.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/disk.c -o $(OUTPUT_FOLDER)/disk.o
+	@echo "Linking object files and generating ELF32 kernel..."
+	@$(LD) $(LFLAGS) \
+		$(OUTPUT_FOLDER)/kernel-entrypoint.o \
+		$(OUTPUT_FOLDER)/intsetup.o \
+		$(OUTPUT_FOLDER)/kernel.o \
+		$(OUTPUT_FOLDER)/gdt.o \
+		$(OUTPUT_FOLDER)/string.o \
+		$(OUTPUT_FOLDER)/framebuffer.o \
+		$(OUTPUT_FOLDER)/portio.o \
+		$(OUTPUT_FOLDER)/idt.o \
+		$(OUTPUT_FOLDER)/interrupt.o \
+		$(OUTPUT_FOLDER)/keyboard.o \
+		$(OUTPUT_FOLDER)/ext2.o \
+		$(OUTPUT_FOLDER)/disk.o \
+		-o $(OUTPUT_FOLDER)/kernel
 
 iso: kernel
+	@echo "Creating ISO image..."
 	@mkdir -p $(OUTPUT_FOLDER)/iso/boot/grub
-	@cp $(OUTPUT_FOLDER)/kernel     $(OUTPUT_FOLDER)/iso/boot/
-	@cp other/grub1                 $(OUTPUT_FOLDER)/iso/boot/grub/
-	@cp $(SOURCE_FOLDER)/menu.lst   $(OUTPUT_FOLDER)/iso/boot/grub/
-# TODO: Create ISO image
-	@cd $(OUTPUT_FOLDER) && genisoimage -R -b boot/grub/grub1 -no-emul-boot -boot-load-size 4 -A os -input-charset utf8 -quiet -boot-info-table -o OS2025.iso iso
-	@rm -r $(OUTPUT_FOLDER)/iso/
+	@cp $(OUTPUT_FOLDER)/kernel $(OUTPUT_FOLDER)/iso/boot/
+	@cp other/grub1 $(OUTPUT_FOLDER)/iso/boot/grub/
+	@cp $(SOURCE_FOLDER)/menu.lst $(OUTPUT_FOLDER)/iso/boot/grub/
+	@cd $(OUTPUT_FOLDER) && genisoimage -R \
+		-b boot/grub/grub1 \
+		-no-emul-boot \
+		-boot-load-size 4 \
+		-A os \
+		-input-charset utf8 \
+		-boot-info-table \
+		-o $(ISO_NAME).iso \
+		iso
+	@rm -rf $(OUTPUT_FOLDER)/iso/
+
+clean:
+	@echo "Cleaning up..."
+	@rm -rf $(OUTPUT_FOLDER)/*

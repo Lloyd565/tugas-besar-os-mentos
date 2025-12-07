@@ -2,14 +2,15 @@ global loader       ; the entry symbol for ELF
 global load_gdt     ; load GDT table
 extern kernel_setup ; kernel
 
-KERNEL_STACK_SIZE equ 4096           ; size of stack in bytes
-MAGIC_NUMBER      equ 0x1BADB002     ; define the magic number constant
-FLAGS             equ 0x0            ; multiboot flags
-CHECKSUM          equ -MAGIC_NUMBER  ; calculate the checksum
-                                     ; (magic number + checksum + flags should equal 0)
+KERNEL_STACK_SIZE   equ 2097152       ; size of stack in bytes
+MAGIC_NUMBER        equ 0x1BADB002    ; define the magic number constant
+FLAGS               equ 0x0           ; multiboot flags
+CHECKSUM            equ -MAGIC_NUMBER ; calculate the checksum
+; (magic number + checksum + flags should equal 0)
 
 section .bss
-align 4                              ; align at 4 bytes
+align 4 ; align at 4 bytes           ; align at 4 bytes
+
 kernel_stack:                        ; label points to beginning of memory
     resb KERNEL_STACK_SIZE           ; reserve stack for the kernel
 
