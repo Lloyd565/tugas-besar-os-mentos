@@ -161,5 +161,10 @@ void syscall(struct InterruptFrame frame) {
             *retcode_ptr = retcode;
             break;
         }
+        case 10:
+        {
+            clear_screen();
+            break;
+        }
     }
 }

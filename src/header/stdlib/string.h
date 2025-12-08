@@ -62,4 +62,10 @@ size_t strlen(const char *s);
  * Returns <0 if s1<s2, 0 if equal, >0 if s1>s2.
  */
 int strcmp(const char *s1, const char *s2);
+
+void strcpy(char *dest, const char *src);
+
+void strcat(char *dest, const char *src);
+
+int snprintf(char *str, size_t size, const char *format, ...);
 #endif
