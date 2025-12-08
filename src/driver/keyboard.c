@@ -12,7 +12,6 @@ const char keyboard_scancode_1_to_ascii_map[256] = {
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
-
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
@@ -42,32 +41,27 @@ const char keyboard_scancode_1_to_ascii_map_shifted[256] = {
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
 };
 
-static struct KeyboardDriverState keyboard_state = {
+// Hapus 'static'
+struct KeyboardDriverState keyboard_state = {
     .read_extended_mode = false,
     .keyboard_input_on = false,
     .keyboard_buffer = '\0',
     .shift_pressed = false,
 };
 
-// Activate keyboard ISR / start listen keyboard & save to buffer
 void keyboard_state_activate() {
-  keyboard_state.keyboard_input_on = true;
+    keyboard_state.keyboard_input_on = true;
 }
 
-// Deactivate keyboard ISR / stop listening keyboard interrupt
 void keyboard_state_deactivate(void){
-  keyboard_state.keyboard_input_on = false;
+    keyboard_state.keyboard_input_on = false;
 }
 
-// Get keyboard buffer value and flush the buffer - @param buf Pointer to char buffer
-void get_keyboard_buffer(char *buf){
-  if (keyboard_state.keyboard_input_on) {
+void get_keyboard_buffer(char *buf) {
+    // Ini dipanggil dari kernel, bukan user space
+    // Langsung ambil tanpa busy-wait
     *buf = keyboard_state.keyboard_buffer;
     keyboard_state.keyboard_buffer = '\0';
-  }
-  else {
-    *buf = '\0'; // If keyboard is not active, return null character
-  }
 }
 
 bool is_shift_presseed(void) {
@@ -84,7 +78,6 @@ void keyboard_isr(void) {
             keyboard_state.read_extended_mode = true;
         } else {
             if (keyboard_state.read_extended_mode) {
-                // Handle arrow keys
                 if (!is_break) {
                     switch (key) {
                         case EXT_SCANCODE_UP:
@@ -103,11 +96,9 @@ void keyboard_isr(void) {
                 }
                 keyboard_state.read_extended_mode = false;
             } else {
-                // Handle shift keys
                 if (key == SCANCODE_LSHIFT || key == SCANCODE_RSHIFT) {
                     keyboard_state.shift_pressed = !is_break;
                 } else if (!is_break) {
-                    // Convert scancode to ASCII with shift consideration
                     char ascii_char;
                     if (keyboard_state.shift_pressed) {
                         ascii_char = keyboard_scancode_1_to_ascii_map_shifted[key];
@@ -116,7 +107,9 @@ void keyboard_isr(void) {
                     }
                     
                     if (ascii_char != '\0') {
+                        __asm__ volatile("" ::: "memory");
                         keyboard_state.keyboard_buffer = ascii_char;
+                        __asm__ volatile("" ::: "memory");
                     }
                 }
             }

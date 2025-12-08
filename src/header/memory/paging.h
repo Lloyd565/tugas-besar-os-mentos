@@ -28,7 +28,13 @@ extern struct PageDirectory _paging_kernel_page_directory;
  */
 struct PageDirectoryEntryFlag {
     uint8_t present_bit        : 1;
-    // TODO : Continue. Note: Only 8-bit flags
+    uint8_t write_bit          : 1;
+    uint8_t user_bit           : 1;
+    uint8_t write_through      : 1;
+    uint8_t access_bit         : 1;
+    uint8_t cache              : 1;
+    uint8_t dirty_bit          : 1;
+    uint8_t use_pagesize_4_mb  : 1;
 } __attribute__((packed));
 
 /**
@@ -46,10 +52,15 @@ struct PageDirectoryEntryFlag {
  */
 struct PageDirectoryEntry {
     struct PageDirectoryEntryFlag flag;
-    uint16_t global_page    : 1;
+    uint16_t global_page       : 1;
+    uint16_t ignored           : 3;
+    uint16_t PAT               : 1;
+    uint16_t higher_address    : 8;
+    uint16_t reserved_2        : 1;
+    uint16_t lower_address     :10;
     // TODO : Continue, Use uint16_t + bitfield here, Do not use uint8_t
 } __attribute__((packed));
-
+    
 /**
  * Page Directory, contain array of PageDirectoryEntry.
  * Note: This data structure is volatile (can be modified from outside this code, check "C volatile keyword"). 
@@ -61,8 +72,8 @@ struct PageDirectoryEntry {
  * @param table Fixed-width array of PageDirectoryEntry with size PAGE_ENTRY_COUNT
  */
 struct PageDirectory {
-    // TODO : Implement
-} __attribute__((packed));
+    volatile struct PageDirectoryEntry table[PAGE_ENTRY_COUNT];
+} __attribute__((packed,  aligned(0x1000)));
 
 /**
  * Containing page manager states.
