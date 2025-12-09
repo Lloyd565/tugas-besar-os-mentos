@@ -184,4 +184,6 @@ void set_tss_kernel_current_stack(void);
 
 void syscall(struct InterruptFrame frame);
 
+void activate_timer_interrupt(void);
+
 #endif

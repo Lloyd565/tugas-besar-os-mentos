@@ -46,6 +46,7 @@ kernel:
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/disk.c -o $(OUTPUT_FOLDER)/disk.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/paging.c -o $(OUTPUT_FOLDER)/paging.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/process/process.c -o $(OUTPUT_FOLDER)/process.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/scheduler/scheduler.c -o $(OUTPUT_FOLDER)/scheduler.o
 	@echo "Linking object files and generating ELF32 kernel..."
 	@$(LD) $(LFLAGS) \
 		$(OUTPUT_FOLDER)/kernel-entrypoint.o \
@@ -62,6 +63,7 @@ kernel:
 		$(OUTPUT_FOLDER)/disk.o \
 		$(OUTPUT_FOLDER)/paging.o \
 		$(OUTPUT_FOLDER)/process.o \
+		$(OUTPUT_FOLDER)/scheduler.o \
 		-o $(OUTPUT_FOLDER)/kernel
 
 iso: kernel
