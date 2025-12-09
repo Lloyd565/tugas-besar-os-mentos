@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdarg.h>
 #include "header/stdlib/string.h"
 
 void* memset(void *s, int c, size_t n) {
@@ -61,4 +62,49 @@ int strcmp(const char *s1, const char *s2) {
         s2++;
     }
     return (int)((unsigned char)*s1 - (unsigned char)*s2);
+}
+
+void strcpy(char *dest, const char *src) {
+    while (*src) {
+        *dest++ = *src++;
+    }
+    *dest = '\0';
+}
+
+void strcat(char *dest, const char *src) {
+    while (*dest) dest++;
+    while (*src) *dest++ = *src++;
+    *dest = '\0';
+}
+
+int snprintf(char *str, size_t size, const char *format, ...) {
+    if (!str || !format || size == 0) return 0;
+    
+    size_t len = 0;
+    const char *ptr = format;
+    char *strptr = str;
+    
+    va_list args;
+    va_start(args, format);
+    
+    while (*ptr && len < size - 1) {
+        if (*ptr == '%') {
+            ptr++;
+            if (*ptr == 's') {
+                const char *s = va_arg(args, const char *);
+                while (*s && len < size - 1) {
+                    *strptr++ = *s++;
+                    len++;
+                }
+            }
+        } else {
+            *strptr++ = *ptr;
+            len++;
+        }
+        ptr++;
+    }
+    
+    *strptr = '\0';
+    va_end(args);
+    return len;
 }

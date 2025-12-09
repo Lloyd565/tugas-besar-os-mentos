@@ -2,6 +2,7 @@
 #include <stdbool.h>          // bool, true, false
 #include "header/filesystem/ext2.h"  // EXT2 structures
 #include "header/stdlib/string.h"    // memset, memcmp
+#include "header/text/framebuffer.h"
 
 #define BLOCK_COUNT 16
 #define INPUT_BUFFER_SIZE 256
@@ -54,34 +55,6 @@ void syscall_get_resolved_path(struct EXT2DriverRequest *request, char *result_p
 
 void syscall_activate_keyboard() {
     syscall(7, 0, 0, 0);
-}
-
-// String utilities - hanya yang belum ada di string.h
-size_t my_strlen(const char *s) {
-    size_t len = 0;
-    while (s[len] != '\0') len++;
-    return len;
-}
-
-int my_strcmp(const char *s1, const char *s2) {
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
-    }
-    return (unsigned char)*s1 - (unsigned char)*s2;
-}
-
-void my_strcpy(char *dest, const char *src) {
-    while (*src) {
-        *dest++ = *src++;
-    }
-    *dest = '\0';
-}
-
-void my_strcat(char *dest, const char *src) {
-    while (*dest) dest++;
-    while (*src) *dest++ = *src++;
-    *dest = '\0';
 }
 
 // Shell state
@@ -144,7 +117,7 @@ void parse_input(char *input, struct Command *cmd) {
 
 // Print string helper
 void print(char *str, uint8_t color) {
-    syscall_puts(str, my_strlen(str), color);
+    syscall_puts(str, strlen(str), color);
 }
 // Command: ls - list directory contents
 void cmd_ls() {
@@ -202,17 +175,17 @@ void cmd_ls() {
 void cmd_cd(char *dirname) {
     if (dirname[0] == '\0') {
         shell_state.current_dir_inode = 2;
-        my_strcpy(shell_state.current_path, "/");
+        strcpy(shell_state.current_path, "/");
         return;
     }
     
-    if (my_strcmp(dirname, ".") == 0) {
+    if (strcmp(dirname, ".") == 0) {
         return;
     }
     // Step 1: Get the inode
     struct EXT2DriverRequest req = {
         .name = dirname,
-        .name_len = my_strlen(dirname),
+        .name_len = strlen(dirname),
         .parent_inode = shell_state.current_dir_inode
     };
     
@@ -231,7 +204,7 @@ void cmd_cd(char *dirname) {
     struct EXT2DriverRequest path_req = {
         .buf = shell_state.current_path,
         .name = dirname,
-        .name_len = my_strlen(dirname)
+        .name_len = strlen(dirname)
     };
     
     retcode = -1;
@@ -241,10 +214,10 @@ void cmd_cd(char *dirname) {
     shell_state.current_dir_inode = new_inode;
     
     if (new_path[0] != '\0') {
-        my_strcpy(shell_state.current_path, new_path);
+        strcpy(shell_state.current_path, new_path);
     } else {
         print("WARNING: path empty, using fallback\n", 0xE);
-        my_strcpy(shell_state.current_path, "/?");
+        strcpy(shell_state.current_path, "/?");
     }
     
 }
@@ -259,7 +232,7 @@ void cmd_mkdir(char *dirname) {
     struct EXT2DriverRequest req = {
         .buf = &buf,
         .name = dirname,
-        .name_len = my_strlen(dirname),
+        .name_len = strlen(dirname),
         .parent_inode = shell_state.current_dir_inode,
         .buffer_size = 0,
         .is_directory = true
@@ -288,7 +261,7 @@ void cmd_cat(char *filename) {
     struct EXT2DriverRequest req = {
         .buf = buf,
         .name = filename,
-        .name_len = my_strlen(filename),
+        .name_len = strlen(filename),
         .parent_inode = shell_state.current_dir_inode,
         .buffer_size = BLOCK_SIZE * BLOCK_COUNT
     };
@@ -324,7 +297,7 @@ void cmd_cp(char *src, char *dest) {
     struct EXT2DriverRequest read_req = {
         .buf = buf,
         .name = src,
-        .name_len = my_strlen(src),
+        .name_len = strlen(src),
         .parent_inode = shell_state.current_dir_inode,
         .buffer_size = BLOCK_SIZE * BLOCK_COUNT
     };
@@ -341,7 +314,7 @@ void cmd_cp(char *src, char *dest) {
     struct EXT2DriverRequest write_req = {
         .buf = buf,
         .name = dest,
-        .name_len = my_strlen(dest),
+        .name_len = strlen(dest),
         .parent_inode = shell_state.current_dir_inode,
         .buffer_size = BLOCK_SIZE * BLOCK_COUNT,
         .is_directory = false
@@ -365,7 +338,7 @@ void cmd_rm(char *name) {
     
     struct EXT2DriverRequest req = {
         .name = name,
-        .name_len = my_strlen(name),
+        .name_len = strlen(name),
         .parent_inode = shell_state.current_dir_inode
     };
     
@@ -393,27 +366,27 @@ void cmd_mv(char *src, char *dest) {
 void execute_command(struct Command *cmd) {
     if (cmd->cmd[0] == '\0') return;
     
-    if (my_strcmp(cmd->cmd, "ls") == 0) {
+    if (strcmp(cmd->cmd, "ls") == 0) {
         cmd_ls();
-    } else if (my_strcmp(cmd->cmd, "cd") == 0) {
+    } else if (strcmp(cmd->cmd, "cd") == 0) {
         cmd_cd(cmd->args[0]);
-    } else if (my_strcmp(cmd->cmd, "pwd") == 0) {
+    } else if (strcmp(cmd->cmd, "pwd") == 0) {
         print(shell_state.current_path, 0xE);
         print("\n", 0xF);
-    } else if (my_strcmp(cmd->cmd, "mkdir") == 0) {
+    } else if (strcmp(cmd->cmd, "mkdir") == 0) {
         cmd_mkdir(cmd->args[0]);
-    } else if (my_strcmp(cmd->cmd, "cat") == 0) {
+    } else if (strcmp(cmd->cmd, "cat") == 0) {
         cmd_cat(cmd->args[0]);
-    } else if (my_strcmp(cmd->cmd, "cp") == 0) {
+    } else if (strcmp(cmd->cmd, "cp") == 0) {
         cmd_cp(cmd->args[0], cmd->args[1]);
-    } else if (my_strcmp(cmd->cmd, "rm") == 0) {
+    } else if (strcmp(cmd->cmd, "rm") == 0) {
         cmd_rm(cmd->args[0]);
-    } else if (my_strcmp(cmd->cmd, "mv") == 0) {
+    } else if (strcmp(cmd->cmd, "mv") == 0) {
         cmd_mv(cmd->args[0], cmd->args[1]);
-    } else if (my_strcmp(cmd->cmd, "clear") == 0) {
+    } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
-        print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", 0xF);
-    } else if (my_strcmp(cmd->cmd, "help") == 0) {
+        syscall(10,0,0,0);
+    } else if (strcmp(cmd->cmd, "help") == 0) {
         print("Available commands:\n", 0xE);
         print("  ls       - list directory\n", 0xF);
         print("  cd       - change directory\n", 0xF);
@@ -432,11 +405,7 @@ void execute_command(struct Command *cmd) {
 }
 
 void read_line(char *buffer, uint32_t max_len) {
-    // HAPUS SELURUH BAGIAN TEST INI:
-    // static int test_counter = 0;
-    // const char *test_commands[] = {"help", "pwd", "ls"};
-    // ... dst
-    
+
     uint32_t pos = 0;
     char c;
     
@@ -463,21 +432,24 @@ void read_line(char *buffer, uint32_t max_len) {
 
 int main(void) {
     shell_state.current_dir_inode = 2;
-    my_strcpy(shell_state.current_path, "/");
-    
-    print("\n", 0xF);
-    print("===================================\n", 0xB);
-    print("    Simple Shell - OS 2025\n", 0xE);
-    print("===================================\n", 0xB);
-    print("Type 'help' for available commands\n\n", 0x7);
+    strcpy(shell_state.current_path, "/");
     
     char input_buffer[INPUT_BUFFER_SIZE];
     struct Command cmd;
-    
+
     while (true) {
-        print("shell:", 0xA);
-        print(shell_state.current_path, 0xE);
-        print("$ ", 0xF);
+        char path[512];
+        char *user = "root";
+        char *at = "@";
+        char *host = "MentOS2130";
+        char *dollar = "$ ";
+
+        syscall(6, (uint32_t)user, 4, FB_GREEN);
+        syscall(6, (uint32_t)at, 1, FB_LIGHT_GRAY);
+        syscall(6, (uint32_t)host, 10, FB_BRIGHT_BLUE);
+        int pathlen = snprintf(path, sizeof(path), "%s", shell_state.current_path);
+        syscall(6, (uint32_t)path, pathlen, FB_BRIGHT_BLUE);
+        syscall(6, (uint32_t)dollar, 2, FB_WHITE);
         
         read_line(input_buffer, INPUT_BUFFER_SIZE);
         

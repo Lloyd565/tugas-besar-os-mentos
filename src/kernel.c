@@ -49,39 +49,40 @@ void kernel_setup(void) {
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
     
-    framebuffer_write_string(0, 0, "[1] Initializing filesystem...", 0xE, 0x0);
+    // framebuffer_write_string(0, 0, "[1] Initializing filesystem...", 0xE, 0x0);
     initialize_filesystem_ext2();
-    framebuffer_write_string(0, 1, "[2] Filesystem OK", 0xA, 0x0);
+    // framebuffer_write_string(0, 1, "[2] Filesystem OK", 0xA, 0x0);
     
-    framebuffer_write_string(0, 2, "[3] Installing TSS...", 0xE, 0x0);
+    // framebuffer_write_string(0, 2, "[3] Installing TSS...", 0xE, 0x0);
     gdt_install_tss();
     set_tss_register();
-    framebuffer_write_string(0, 3, "[4] TSS OK", 0xA, 0x0);
+    // framebuffer_write_string(0, 3, "[4] TSS OK", 0xA, 0x0);
 
-    framebuffer_write_string(0, 4, "[5] Allocating paging...", 0xE, 0x0);
+    // framebuffer_write_string(0, 4, "[5] Allocating paging...", 0xE, 0x0);
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
-    framebuffer_write_string(0, 5, "[6] Paging OK", 0xA, 0x0);
+    // framebuffer_write_string(0, 5, "[6] Paging OK", 0xA, 0x0);
 
-    framebuffer_write_string(0, 6, "[7] Reading shell...", 0xE, 0x0);
+    // framebuffer_write_string(0, 6, "[7] Reading shell...", 0xE, 0x0);
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
         .name                  = "shell",
         .parent_inode          = 2,
         .buffer_size           = 0x100000,
-        .name_len              = 5,
+        .name_len              = 5
     };
+
 
     int8_t retcode = read(request);
 
     if (retcode == 0) {
-        framebuffer_write_string(0, 7, "[8] Shell loaded OK", 0xA, 0x0);
+        // framebuffer_write_string(0, 7, "[8] Shell loaded OK", 0xA, 0x0);
         
         // TAMBAHKAN INI - Set TSS dan execute shell
         set_tss_kernel_current_stack();
         kernel_execute_user_program((uint8_t*) 0);
         
     } else {
-        framebuffer_write_string(0, 7, "[8] Shell FAIL! RC=", 0xC, 0x0);
+        // framebuffer_write_string(0, 7, "[8] Shell FAIL! RC=", 0xC, 0x0);
         
         char rc_display = '0' + retcode;
         if (retcode < 0) {

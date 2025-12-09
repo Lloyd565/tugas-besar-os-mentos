@@ -109,6 +109,15 @@ void framebuffer_write(uint8_t row, uint8_t col, char c, uint8_t fg, uint8_t bg)
 }
 
 void framebuffer_clear(void) {
-    // TODO : Implement
-    memset(FRAMEBUFFER_MEMORY_OFFSET, 0x00, FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGHT*2);
+    uint16_t *fb = (uint16_t *) FRAMEBUFFER_MEMORY_OFFSET; // Mengambil alamat memory framebuffer
+    for (uint16_t i = 0; i < 80 * 25; i++) {
+        fb[i] = (0x07 << 8) | 0x00;
+    }
+    framebuffer_set_cursor(0,0);
+}
+
+void clear_screen(void) {
+    framebuffer_clear();
+    cursor_row = 0;
+    cursor_col = 0;
 }
