@@ -83,7 +83,10 @@
         
 //         // TAMBAHKAN INI - Set TSS dan execute shell
 //         set_tss_kernel_current_stack();
-//         kernel_execute_user_program((uint8_t*) 0);
+//         // kernel_execute_user_program((uint8_t*) 0);
+//         process_create_user_process(request);
+//         scheduler_init();
+//         scheduler_switch_to_next_process();
         
 //     } else {
 //         // framebuffer_write_string(0, 7, "[8] Shell FAIL! RC=", 0xC, 0x0);
@@ -122,7 +125,7 @@ void kernel_setup(void) {
     initialize_filesystem_ext2();
     gdt_install_tss();
     set_tss_register();
-
+    paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
     // Write shell into memory
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
@@ -131,7 +134,7 @@ void kernel_setup(void) {
         .buffer_size           = 0x100000,
         .name_len              = 5,
     };
-
+    // read(request);
     // Set TSS.esp0 for interprivilege interrupt
     set_tss_kernel_current_stack();
 

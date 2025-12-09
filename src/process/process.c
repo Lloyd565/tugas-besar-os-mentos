@@ -7,7 +7,12 @@
 struct ProcessControlBlock _process_list[PROCESS_COUNT_MAX] = {0};
 struct ProcessState process_manager_state = {0};
 
-
+struct ProcessControlBlock* process_get_current_running_pcb_pointer(void){
+    for (int i = 0; i< PROCESS_COUNT_MAX; i++){
+        if (_process_list[i].metadata.state == RUNNING) return &(_process_list[i]);
+    }
+    return NULL;
+}
 int32_t ceil_div(uint32_t a, uint32_t b) {
     return (a+b-1)/b;
 }
@@ -55,7 +60,51 @@ int32_t process_create_user_process(struct EXT2DriverRequest request) {
     int32_t p_index = process_list_get_inactive_index();
     struct ProcessControlBlock *new_pcb = &(_process_list[p_index]);
 
+    // DEBUG
+    // char buf[32];
+    // sprintf(buf, "p_index=%d\n", p_index);
+    // puts(buf, strlen(buf), 0x0F, 0x00);
+    // 
+
+    if (p_index < 0){
+        // Tidak ada slot kosong
+        retcode = PROCESS_CREATE_FAIL_MAX_PROCESS_EXCEEDED;
+        goto exit_cleanup;
+    }
+
+    new_pcb->context.page_directory_virtual_addr = paging_create_new_page_directory();
+    // allocate user page frame
+
+    paging_allocate_user_page_frame(new_pcb->context.page_directory_virtual_addr, (uint8_t *) 0);
+    paging_allocate_user_page_frame(new_pcb->context.page_directory_virtual_addr, (uint8_t *) 0xBFFFFFFC);
+    // temporarily change the page directory to the new process
+
+    char name_buf[PROCESS_NAME_LENGTH_MAX];
+    memcpy(name_buf, request.name, request.name_len);
+    request.name = name_buf;
+    struct PageDirectory *old_page_directory = paging_get_current_page_directory_addr();
+    paging_use_page_directory(new_pcb->context.page_directory_virtual_addr);
+    
+    // read and load the executable into the new process
+    read(request);
+    // restore the old page directory
+    paging_use_page_directory(old_page_directory);
+    
+    // prepare state and context
+    new_pcb->context.eip = 0;
+    new_pcb->context.cpu = (struct CPURegister) {0};
+    new_pcb->context.cpu.stack.ebp = 0xBFFFFFFC;
+    new_pcb->context.cpu.stack.esp = 0xBFFFFFFC;
+    new_pcb->context.cpu.segment.ds = 0x23;
+    new_pcb->context.cpu.segment.es = 0x23;
+    new_pcb->context.cpu.segment.fs = 0x23;
+    new_pcb->context.cpu.segment.gs = 0x23;
+    new_pcb->context.eflags = CPU_EFLAGS_BASE_FLAG | CPU_EFLAGS_FLAG_INTERRUPT_ENABLE;
     new_pcb->metadata.pid = process_generate_new_pid();
+    new_pcb->metadata.state = READY;
+    memcpy(new_pcb->metadata.name, name_buf, request.name_len);
+    new_pcb->metadata.name[request.name_len] = '\0';
+    process_manager_state.active_process_count++;
 
 exit_cleanup:
     return retcode;

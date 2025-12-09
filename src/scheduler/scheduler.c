@@ -1,4 +1,5 @@
 #include "header/scheduler/scheduler.h"
+#include "header/process/process.h"
 
 
 extern struct ProcessControlBlock _process_list[PROCESS_COUNT_MAX];
@@ -35,7 +36,8 @@ void scheduler_save_context_to_current_running_pcb(struct Context ctx){
  */
 __attribute__((noreturn)) void scheduler_switch_to_next_process(void){
     uint32_t next = -1;
-    struct ProcessControlBlock* currPCB = process_get_current_running_pcb_pointer();
+    // // Cek running pcb, kalau ada yang lagi ngerun = stop
+    struct ProcessControlBlock *currPCB = process_get_current_running_pcb_pointer();
     if (currPCB != NULL){
         currPCB->metadata.state = READY;
         currPCB->metadata.is_active = false;
@@ -44,7 +46,7 @@ __attribute__((noreturn)) void scheduler_switch_to_next_process(void){
     while (true){
         next = (next + 1) % PROCESS_COUNT_MAX;
         if (_process_list[next].metadata.state == READY){
-            struct ProcessControlBlock* nextPCB = &_process_list[next];
+            struct ProcessControlBlock *nextPCB = &(_process_list[next]);
             nextPCB->metadata.state = RUNNING;
             nextPCB->metadata.is_active = true;
             paging_use_page_directory(nextPCB->context.page_directory_virtual_addr);

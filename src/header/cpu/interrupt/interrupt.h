@@ -103,7 +103,7 @@ struct CPURegister {
         uint32_t ds;
     } __attribute__((packed)) segment;
 } __attribute__((packed));
-
+    
 /**
  * InterruptStack, data pushed by CPU when interrupt / exception is raised.
  * Refer to Intel x86 Vol 3a: Figure 6-4 Stack usage on transfer to Interrupt.
