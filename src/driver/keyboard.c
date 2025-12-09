@@ -76,7 +76,7 @@ void keyboard_isr(void) {
     if (keyboard_state.keyboard_input_on) {
         if (scancode == EXTENDED_SCANCODE_BYTE) {
             keyboard_state.read_extended_mode = true;
-        } else {
+            } else {
             if (keyboard_state.read_extended_mode) {
                 if (!is_break) {
                     switch (key) {
