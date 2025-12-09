@@ -5,7 +5,7 @@
 #include "header/filesystem/ext2.h"
 #include "header/text/framebuffer.h"
 #include "header/stdlib/string.h"
-
+#include "header/scheduler/scheduler.h"
 struct TSSEntry _interrupt_tss_entry = {
     .ss0  = GDT_KERNEL_DATA_SEGMENT_SELECTOR,
 };
@@ -47,6 +47,10 @@ void pic_remap(void) {
 
 void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
+        case PIC1_OFFSET + IRQ_TIMER:
+            pic_ack(IRQ_TIMER);
+            // timer_isr(frame);
+            break;
         case 14:
             __asm__("hlt");
             break;
@@ -179,6 +183,23 @@ void activate_timer_interrupt(void) {
 
     // Activate the interrupt
     out(PIC1_DATA, in(PIC1_DATA) & ~(1 << IRQ_TIMER));
+    
+}
+
+void timer_isr(struct InterruptFrame frame){
+    // get context to save
+    struct Context ctx = {
+        .cpu = frame.cpu,
+        // .cpu.stack.esp = frame.cpu.stack.esp,
+        .eip = frame.int_stack.eip,
+        .eflags = frame.int_stack.eflags,
+        .page_directory_virtual_addr = paging_get_current_page_directory_addr()
+    };
+    // framebuffer_write_string(5, 0, "context saved", 0, 0);
+    //save context, schedule for next process
+    scheduler_save_context_to_current_running_pcb(ctx);
+    scheduler_switch_to_next_process();
+    // framebuffer_write_string(6, 0, "scheduled next process", 0, 0);
 }
 
 

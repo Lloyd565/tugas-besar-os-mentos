@@ -142,4 +142,6 @@ void kernel_setup(void) {
     process_create_user_process(request);
     scheduler_init();
     scheduler_switch_to_next_process();
+    scheduler_switch_to_next_process();
+    framebuffer_write_string(5, 8, "Among", 0xC, 0x0);
 }

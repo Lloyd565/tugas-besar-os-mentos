@@ -38,9 +38,9 @@ process_context_switch:
     mov es, [ecx + 0x28]
     mov ds, [ecx + 0x2c]
 
-    ; cr3, virtual_page_dir
-    mov eax, [ecx + 0x38]
-    mov cr3, eax
+    ; ; cr3, virtual_page_dir
+    ; mov eax, [ecx + 0x44]
+    ; mov cr3, eax
 
     ; rest of general
     mov eax, [ecx + 0x1c]

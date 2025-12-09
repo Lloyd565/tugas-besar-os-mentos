@@ -186,4 +186,5 @@ void syscall(struct InterruptFrame frame);
 
 void activate_timer_interrupt(void);
 
+void timer_isr(struct InterruptFrame frame);
 #endif
