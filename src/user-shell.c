@@ -366,14 +366,12 @@ void cmd_mv(char *src, char *dest) {
     cmd_rm(src);
 }
 
-// Command: beep - simple beep with default frequency
 void cmd_beep() {
     print("Beeping...\n", 0xA);
     syscall_speaker_beep(1000, 200);
     print("Done!\n", 0xA);
 }
 
-// Command: speaker - beep with custom frequency and duration
 void cmd_speaker(char *freq_str, char *duration_str) {
     if (freq_str[0] == '\0' || duration_str[0] == '\0') {
         print("Usage: speaker <frequency> <duration>\n", 0xC);
@@ -381,13 +379,11 @@ void cmd_speaker(char *freq_str, char *duration_str) {
         return;
     }
     
-    // Parse frequency
     uint16_t frequency = 0;
     for (int i = 0; freq_str[i] != '\0' && freq_str[i] >= '0' && freq_str[i] <= '9'; i++) {
         frequency = frequency * 10 + (freq_str[i] - '0');
     }
     
-    // Parse duration
     uint32_t duration = 0;
     for (int i = 0; duration_str[i] != '\0' && duration_str[i] >= '0' && duration_str[i] <= '9'; i++) {
         duration = duration * 10 + (duration_str[i] - '0');
