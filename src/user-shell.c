@@ -362,128 +362,6 @@ void cmd_mv(char *src, char *dest) {
     cmd_rm(src);
 }
 
-// void cmd_echo(char args[][64], uint8_t argc) {
-//     // if (argc < 3 || strcmp(args[argc-2], ">") != 0) {
-//     //     for (uint8_t i = 0; i < argc; i++) {
-//     //         print(args[i], 0xF);
-//     //         if (i < argc - 1) print (" ", 0xF);
-//     //     }
-//     //     print("\n", 0xF);
-//     //     return;
-//     // }
-//     if (argc == 0) {
-//         print("\n", 0xF);
-//         return;
-//     }
-
-//     // for ">"
-//     bool to_file = false;
-//     uint8_t file_arg_index = 0;
-
-//     for (uint8_t i = 0; i < argc; i++) {
-//         if (strcmp(args[i], ">") == 0) {
-//             to_file = true;
-//             file_arg_index = i;
-//             break;
-//         }
-//     }
-    
-//     if (!to_file) {
-//         for (uint8_t i = 0; i < argc; i++) {
-//             print(args[i], 0xF);
-//             if (i < argc - 1) print(" ", 0xF);
-//         }
-//         print("\n", 0xF);
-//         return;
-//     }
-    
-//     if (file_arg_index == 0) {
-//         print("echo: syntax error near '>'\n", 0xC);
-//         return;
-//     }
-    
-//     if (file_arg_index >= argc - 1) {
-//         print("echo: missing filename after '>'\n", 0xC);
-//         return;
-//     }
-    
-//     // Build content from arguments before ">"
-//     struct BlockBuffer buf;
-//     memset(&buf, 0, sizeof(struct BlockBuffer));
-    
-//     char *content = (char*)buf.buf;
-//     uint32_t offset = 0;
-    
-//     for (uint8_t i = 0; i < file_arg_index; i++) {
-//         uint32_t len = strlen(args[i]);
-        
-//         // Check bof
-//         if (offset + len >= BLOCK_SIZE) {
-//             print("echo: content too large\n", 0xC);
-//             return;
-//         }
-        
-//         memcpy(content + offset, args[i], len);
-//         offset += len;
-        
-//         if (i < file_arg_index - 1) {
-//             content[offset++] = ' ';
-//         }
-//     }
-//     content[offset++] = '\n';
-    
-//     // Write to file (filename after ">")
-//     char *filename = args[file_arg_index + 1];
-    
-//     struct EXT2DriverRequest req = {
-//         .buf = &buf,
-//         .name = filename,
-//         .name_len = strlen(filename),
-//         .parent_inode = shell_state.current_dir_inode,
-//         .buffer_size = offset,
-//         .is_directory = false
-//     };
-    
-//     int8_t retcode;
-//     syscall_write(&req, &retcode);
-    
-//     if (retcode == 0) {
-//         print("File created\n", 0xA);
-//     } else if (retcode == 1) {
-//         print("echo: file already exists\n", 0xE);
-//     } else {
-//         print("echo: error creating file\n", 0xC);
-//     }
-// }
-
-// void cmd_touch(char *filename) {
-//     if (filename[0] == '\0') {
-//         print("touch: missing operand\n", 0xC);
-//         return;
-//     }
-    
-//     struct BlockBuffer buf;
-//     struct EXT2DriverRequest req = {
-//         .buf = &buf,
-//         .name = filename,
-//         .name_len = strlen(filename),
-//         .parent_inode = shell_state.current_dir_inode,
-//         .buffer_size = 0,
-//         .is_directory = false
-//     };
-    
-//     int8_t retcode;
-//     syscall_write(&req, &retcode);
-    
-//     if (retcode == 0) {
-//         print("File created\n", 0xA);
-//     } else if (retcode == 1) {
-//         print("touch: file already exists\n", 0xC);
-//     } else {
-//         print("touch: error creating file\n", 0xC);
-//     }
-// }
-
 // Execute command
 void execute_command(struct Command *cmd) {
     if (cmd->cmd[0] == '\0') return;
@@ -504,11 +382,7 @@ void execute_command(struct Command *cmd) {
     } else if (strcmp(cmd->cmd, "rm") == 0) {
         cmd_rm(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "mv") == 0) {
-        cmd_mv(cmd->args[0], cmd->args[1]);    
-    // } else if (strcmp(cmd->cmd, "echo") == 0){
-    //     cmd_echo(cmd->args, cmd->argc);
-    // } else if (strcmp(cmd->cmd, "touch") == 0){
-    //     cmd_touch(cmd->args[0]);
+        cmd_mv(cmd->args[0], cmd->args[1]);
     } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
         syscall(10,0,0,0);

@@ -43,17 +43,19 @@ void putchar (char c, uint8_t fg, uint8_t bg) {
     }
     if (cursor_row >= FRAMEBUFFER_HEIGHT) {
         // SCROLL UP
-        // FRAMEBUFFER_MEMORY_OFFSET is defined as uint16_t* so operate by 16-bit cells
-        uint16_t *fb = (uint16_t *) FRAMEBUFFER_MEMORY_OFFSET;
         for (uint8_t row = 1; row < FRAMEBUFFER_HEIGHT; row++) {
             for (uint8_t col = 0; col < FRAMEBUFFER_WIDTH; col++) {
-                fb[(row - 1) * FRAMEBUFFER_WIDTH + col] = fb[row * FRAMEBUFFER_WIDTH + col];
+                FRAMEBUFFER_MEMORY_OFFSET[(row - 1) * FRAMEBUFFER_WIDTH*2 + col*2] =
+                    FRAMEBUFFER_MEMORY_OFFSET[row * FRAMEBUFFER_WIDTH*2 + col*2];
+                FRAMEBUFFER_MEMORY_OFFSET[(row - 1) * FRAMEBUFFER_WIDTH*2 + col*2 + 1] =
+                    FRAMEBUFFER_MEMORY_OFFSET[row * FRAMEBUFFER_WIDTH*2 + col*2 + 1];
             }
         }
         // CLEAR LAST LINE
-        uint8_t color = (bg << 4) | (fg & 0x0F);
-        for (uint8_t col = 0; col < FRAMEBUFFER_WIDTH; col++) {
-            fb[(FRAMEBUFFER_HEIGHT - 1) * FRAMEBUFFER_WIDTH + col] = (color << 8) | ' ';
+        for (uint8_t col = 0; col < FRAMEBUFFER_WIDTH; col++)
+        {
+            FRAMEBUFFER_MEMORY_OFFSET[(FRAMEBUFFER_HEIGHT - 1) * FRAMEBUFFER_WIDTH*2 + col*2] = ' ';
+            FRAMEBUFFER_MEMORY_OFFSET[(FRAMEBUFFER_HEIGHT - 1) * FRAMEBUFFER_WIDTH*2 + col*2 + 1] = (bg << 4) | (fg & 0x0F);
         }
         cursor_row = FRAMEBUFFER_HEIGHT - 1;
     }
