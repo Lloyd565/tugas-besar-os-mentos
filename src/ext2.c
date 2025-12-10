@@ -772,6 +772,158 @@ uint32_t allocate_node(void)
     return 0;
 }
 
+/* =================== INDIRECT BLOCK HELPERS ============================*/
+#define DIRECT_BLOCKS 12
+#define PTRS_PER_BLOCK (BLOCK_SIZE / sizeof(uint32_t))
+
+/**
+ * Load all blocks from inode into buffer (supports indirect blocks)
+ * @param buf Destination buffer
+ * @param i_block Array of block pointers from inode
+ * @param file_size Size of file in bytes
+ */
+void load_inode_blocks(void *buf, uint32_t *i_block, uint32_t file_size)
+{
+    uint32_t bytes_read = 0;
+    uint32_t blocks_to_read = (file_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    struct BlockBuffer block_buff;
+
+    // Read direct blocks (0-11)
+    for (uint32_t i = 0; i < DIRECT_BLOCKS && i < blocks_to_read; i++) {
+        if (i_block[i] == 0) break;
+
+        read_blocks(&block_buff, i_block[i], 1);
+
+        uint32_t bytes_to_copy = BLOCK_SIZE;
+        if (bytes_read + bytes_to_copy > file_size) {
+            bytes_to_copy = file_size - bytes_read;
+        }
+
+        memcpy((uint8_t *)buf + bytes_read, block_buff.buf, bytes_to_copy);
+        bytes_read += bytes_to_copy;
+    }
+
+    // Read single indirect block (i_block[12])
+    if (blocks_to_read > DIRECT_BLOCKS && i_block[12] != 0) {
+        struct BlockBuffer indirect_buff;
+        read_blocks(&indirect_buff, i_block[12], 1);
+        uint32_t *indirect_ptrs = (uint32_t *)indirect_buff.buf;
+
+        for (uint32_t i = 0; i < PTRS_PER_BLOCK && (DIRECT_BLOCKS + i) < blocks_to_read; i++) {
+            if (indirect_ptrs[i] == 0) break;
+
+            read_blocks(&block_buff, indirect_ptrs[i], 1);
+
+            uint32_t bytes_to_copy = BLOCK_SIZE;
+            if (bytes_read + bytes_to_copy > file_size) {
+                bytes_to_copy = file_size - bytes_read;
+            }
+
+            memcpy((uint8_t *)buf + bytes_read, block_buff.buf, bytes_to_copy);
+            bytes_read += bytes_to_copy;
+        }
+    }
+}
+
+/**
+ * Allocate blocks and write data from buffer (supports indirect blocks)
+ * @param buf Source buffer with data
+ * @param node Inode to update with block pointers
+ * @param buffer_size Size of data to write
+ * @return 0 on success, -1 on failure
+ */
+int8_t allocate_node_blocks(void *buf, struct EXT2Inode *node, uint32_t buffer_size)
+{
+    uint32_t blocks_needed = (buffer_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint32_t bytes_written = 0;
+    struct BlockBuffer write_buff;
+
+    // Initialize all block pointers to 0
+    for (int i = 0; i < 15; i++) {
+        node->i_block[i] = 0;
+    }
+
+    // Allocate and write direct blocks (0-11)
+    uint32_t direct_count = (blocks_needed < DIRECT_BLOCKS) ? blocks_needed : DIRECT_BLOCKS;
+    for (uint32_t i = 0; i < direct_count; i++) {
+        uint32_t block_num = allocate_block();
+        if (block_num == 0) {
+            // Cleanup on failure
+            for (uint32_t j = 0; j < i; j++) {
+                set_block_used(node->i_block[j], false);
+            }
+            return -1;
+        }
+
+        node->i_block[i] = block_num;
+
+        memset(&write_buff, 0, sizeof(write_buff));
+        uint32_t bytes_to_write = BLOCK_SIZE;
+        if (bytes_written + bytes_to_write > buffer_size) {
+            bytes_to_write = buffer_size - bytes_written;
+        }
+
+        memcpy(write_buff.buf, (uint8_t *)buf + bytes_written, bytes_to_write);
+        write_blocks(&write_buff, block_num, 1);
+        bytes_written += bytes_to_write;
+    }
+
+    // Allocate indirect blocks if needed
+    if (blocks_needed > DIRECT_BLOCKS) {
+        uint32_t indirect_block = allocate_block();
+        if (indirect_block == 0) {
+            // Cleanup direct blocks
+            for (uint32_t j = 0; j < direct_count; j++) {
+                set_block_used(node->i_block[j], false);
+            }
+            return -1;
+        }
+        node->i_block[12] = indirect_block;
+
+        struct BlockBuffer indirect_buff;
+        memset(&indirect_buff, 0, sizeof(indirect_buff));
+        uint32_t *indirect_ptrs = (uint32_t *)indirect_buff.buf;
+
+        uint32_t indirect_count = blocks_needed - DIRECT_BLOCKS;
+        if (indirect_count > PTRS_PER_BLOCK) {
+            indirect_count = PTRS_PER_BLOCK;
+        }
+
+        for (uint32_t i = 0; i < indirect_count; i++) {
+            uint32_t block_num = allocate_block();
+            if (block_num == 0) {
+                // Cleanup
+                for (uint32_t j = 0; j < i; j++) {
+                    set_block_used(indirect_ptrs[j], false);
+                }
+                set_block_used(indirect_block, false);
+                for (uint32_t j = 0; j < direct_count; j++) {
+                    set_block_used(node->i_block[j], false);
+                }
+                return -1;
+            }
+
+            indirect_ptrs[i] = block_num;
+
+            memset(&write_buff, 0, sizeof(write_buff));
+            uint32_t bytes_to_write = BLOCK_SIZE;
+            if (bytes_written + bytes_to_write > buffer_size) {
+                bytes_to_write = buffer_size - bytes_written;
+            }
+
+            memcpy(write_buff.buf, (uint8_t *)buf + bytes_written, bytes_to_write);
+            write_blocks(&write_buff, block_num, 1);
+            bytes_written += bytes_to_write;
+        }
+
+        // Write indirect block table
+        write_blocks(&indirect_buff, indirect_block, 1);
+    }
+
+    node->i_blocks = blocks_needed * (BLOCK_SIZE / 512);
+    return 0;
+}
+
 /* =================== DIRECTORY ENTRY OPERATIONS ============================*/
 struct EXT2DirectoryEntry *find_entry_in_dir(uint32_t dir_inode, char *name, uint8_t name_len)
 {
@@ -859,23 +1011,14 @@ int8_t read(struct EXT2DriverRequest request)
         return 2;
     }
 
-    uint32_t bytes_read = 0;
-    uint32_t blocks_to_read = (file_node.i_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    for (uint32_t i = 0; i < blocks_to_read && i < 12; i++) {
-        if (file_node.i_block[i] == 0) break;
-
-        struct BlockBuffer block_buff;
-        read_blocks(&block_buff, file_node.i_block[i], 1);
-
-        uint32_t bytes_to_copy = BLOCK_SIZE;
-        if (bytes_read + bytes_to_copy > file_node.i_size) {
-            bytes_to_copy = file_node.i_size - bytes_read;
-        }
-
-        memcpy((uint8_t *)request.buf + bytes_read, block_buff.buf, bytes_to_copy);
-        bytes_read += bytes_to_copy;
+    // Copy i_block array to avoid packed struct alignment issue
+    uint32_t block_ptrs[15];
+    for (int i = 0; i < 15; i++) {
+        block_ptrs[i] = file_node.i_block[i];
     }
+
+    // Use helper function to load all blocks (including indirect)
+    load_inode_blocks(request.buf, block_ptrs, file_node.i_size);
 
     return 0;
 }
@@ -1015,32 +1158,10 @@ int8_t write(struct EXT2DriverRequest *request)
         new_node.i_mode = EXT2_S_IFREG | 0644;
         new_node.i_size = request->buffer_size;
 
-        uint32_t blocks_needed = (request->buffer_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        if (blocks_needed > 12) blocks_needed = 12;
-        new_node.i_blocks = blocks_needed * (BLOCK_SIZE / 512);
-
-        uint32_t bytes_written = 0;
-        for (uint32_t i = 0; i < blocks_needed; i++) {
-            uint32_t block_num = allocate_block();
-            if (block_num == 0) {
-                for (uint32_t j = 0; j < i; j++)
-                    set_block_used(new_node.i_block[j], false);
-                set_inode_used(new_inode, false);
-                return -1;
-            }
-
-            new_node.i_block[i] = block_num;
-
-            struct BlockBuffer write_buff;
-            memset(&write_buff, 0, sizeof(write_buff));
-
-            uint32_t bytes_to_write = BLOCK_SIZE;
-            if (bytes_written + bytes_to_write > request->buffer_size)
-                bytes_to_write = request->buffer_size - bytes_written;
-
-            memcpy(write_buff.buf, (uint8_t *)request->buf + bytes_written, bytes_to_write);
-            write_blocks(&write_buff, block_num, 1);
-            bytes_written += bytes_to_write;
+        // Use helper function to allocate blocks (supports indirect)
+        if (allocate_node_blocks(request->buf, &new_node, request->buffer_size) != 0) {
+            set_inode_used(new_inode, false);
+            return -1;
         }
     }
 

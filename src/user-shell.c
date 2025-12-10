@@ -362,6 +362,39 @@ void cmd_mv(char *src, char *dest) {
     cmd_rm(src);
 }
 
+void cmd_echo (char *text) {
+    print(text, 0xF);
+    print("\n", 0xF);
+}
+
+void cmd_touch(char *filename) {
+    if (filename[0] == '\0') {
+        print("touch: missing operand\n", 0xC);
+        return;
+    }
+    
+    struct BlockBuffer buf;
+    struct EXT2DriverRequest req = {
+        .buf = &buf,
+        .name = filename,
+        .name_len = strlen(filename),
+        .parent_inode = shell_state.current_dir_inode,
+        .buffer_size = 0,
+        .is_directory = false
+    };
+    
+    int8_t retcode;
+    syscall_write(&req, &retcode);
+    
+    if (retcode == 0) {
+        print("File created\n", 0xA);
+    } else if (retcode == 1) {
+        print("touch: file already exists\n", 0xC);
+    } else {
+        print("touch: error creating file\n", 0xC);
+    }
+}
+
 // Execute command
 void execute_command(struct Command *cmd) {
     if (cmd->cmd[0] == '\0') return;
@@ -383,6 +416,10 @@ void execute_command(struct Command *cmd) {
         cmd_rm(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "mv") == 0) {
         cmd_mv(cmd->args[0], cmd->args[1]);
+    } else if (strcmp(cmd->cmd, "echo") == 0) {
+        cmd_echo(cmd->args[0]);
+    } else if (strcmp(cmd->cmd, "touch") == 0) {
+        cmd_touch(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
         syscall(10,0,0,0);
@@ -396,6 +433,8 @@ void execute_command(struct Command *cmd) {
         print("  cp       - copy file\n", 0xF);
         print("  rm       - remove file/dir\n", 0xF);
         print("  mv       - move/rename\n", 0xF);
+        print("  echo     - print text\n", 0xF);
+        print("  touch    - create empty file\n", 0xF);
         print("  clear    - clear screen\n", 0xF);
         print("  help     - show this help\n", 0xF);
     } else {
@@ -436,6 +475,8 @@ int main(void) {
     
     char input_buffer[INPUT_BUFFER_SIZE];
     struct Command cmd;
+
+    syscall_activate_keyboard();
 
     while (true) {
         char path[512];
