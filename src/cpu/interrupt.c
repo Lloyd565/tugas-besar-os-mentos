@@ -1,6 +1,7 @@
 #include "header/cpu/interrupt/interrupt.h"
 #include "header/cpu/portio.h"
 #include "header/driver/keyboard.h"
+#include "header/driver/mouse.h"
 #include "header/driver/speaker.h"
 #include "header/cpu/gdt.h"
 #include "header/filesystem/ext2.h"
@@ -54,6 +55,9 @@ void main_interrupt_handler(struct InterruptFrame frame) {
         case PIC1_OFFSET + IRQ_KEYBOARD:
             keyboard_isr();
             break;
+        case PIC2_OFFSET + IRQ_MOUSE:
+            mouse_isr();
+            break;
         case 0x30:
             syscall(frame);
             break;
@@ -64,6 +68,9 @@ void activate_keyboard_interrupt(void) {
     out(PIC1_DATA, in(PIC1_DATA) & ~(1 << IRQ_KEYBOARD));
 }
 
+void activate_mouse_interrupt(void) {
+    out(PIC2_DATA, in(PIC2_DATA) & ~(1 << IRQ_MOUSE));
+}
 
 void set_tss_kernel_current_stack(void) {
     uint32_t stack_ptr;
@@ -108,16 +115,32 @@ void syscall(struct InterruptFrame frame) {
                 *(struct EXT2DriverRequest*) frame.cpu.general.ebx
             );
             break;
-        case 4: { // getchar - BLOCKING version
-            // Busy-wait sampai ada input
-            while (keyboard_state.keyboard_buffer == '\0') {
-                // Yield CPU - enable interrupt sebentar
+        case 4: { // getchar - with mouse polling capability
+            // Non-blocking getchar with small timeout to allow mouse updates
+            uint32_t timeout = 50000;  // Small timeout iterations
+            
+            while (keyboard_state.keyboard_buffer == '\0' && !keyboard_state.ctrl_c_pressed && timeout > 0) {
+                // Enable interrupts and wait a tiny bit
+                __asm__ volatile("sti");
+                for (volatile uint32_t i = 0; i < 1000; i++);  // Small delay
+                __asm__ volatile("cli");
+                timeout--;
+            }
+            
+            // If still no input, do a full HLT wait
+            while (keyboard_state.keyboard_buffer == '\0' && !keyboard_state.ctrl_c_pressed) {
                 __asm__ volatile("sti; hlt");
             }
             
-            // Ambil karakter
-            *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
-            keyboard_state.keyboard_buffer = '\0';
+            // Check apakah Ctrl+C yang ditekan
+            if (keyboard_state.ctrl_c_pressed) {
+                keyboard_state.ctrl_c_pressed = false;
+                *((char*)frame.cpu.general.ebx) = 0x03;  // Return Ctrl+C character (ASCII 3)
+            } else {
+                // Ambil karakter
+                *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
+                keyboard_state.keyboard_buffer = '\0';
+            }
             break;
         }
         case 5:
@@ -170,6 +193,82 @@ void syscall(struct InterruptFrame frame) {
             uint16_t frequency = (uint16_t) frame.cpu.general.ebx;
             uint32_t duration = frame.cpu.general.ecx;
             speaker_beep(frequency, duration);
+            break;
+        }
+        case 12: // is_ctrl_c_pressed syscall
+        {
+            bool result = is_ctrl_c_pressed();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 13: // mouse_init syscall
+        {
+            mouse_init();
+            activate_mouse_interrupt();
+            break;
+        }
+        case 14: // mouse_get_state syscall
+        {
+            uint32_t *x = (uint32_t*)frame.cpu.general.ebx;
+            uint32_t *y = (uint32_t*)frame.cpu.general.ecx;
+            uint8_t *buttons = (uint8_t*)frame.cpu.general.edx;
+            *buttons = mouse_get_state(x, y);
+            break;
+        }
+        case 15: // mouse_get_click syscall
+        {
+            bool result = mouse_get_click();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 16: // render_mouse_pointer syscall - draw mouse blocking text
+        {
+            uint32_t x = frame.cpu.general.ebx;
+            uint32_t y = frame.cpu.general.ecx;
+            uint8_t color = (uint8_t)frame.cpu.general.edx;
+            
+            // Convert pixel coordinates to character grid (80x24)
+            uint8_t col = x / 8;  // Assuming 8 pixels per character width
+            uint8_t row = y / 8;  // Assuming 8 pixels per character height
+            
+            if (col < 80 && row < 24) {
+                framebuffer_write(row, col, '*', color, 0x00);
+            }
+            break;
+        }
+        case 17: // is_ctrl_pressed syscall
+        {
+            bool result = is_ctrl_pressed();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 18: // is_shift_pressed syscall
+        {
+            bool result = is_shift_pressed();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 19: // get_mouse_drag_state syscall
+        {
+            // ebx = &drag_active, ecx = &start_x, edx = &start_y
+            // Note: need 4 more registers for end_x and end_y, so return via structure
+            // For now, just return whether drag is active
+            bool *drag_active_ptr = (bool*)frame.cpu.general.ebx;
+            uint32_t *coords = (uint32_t*)frame.cpu.general.ecx; // Array: [start_x, start_y, end_x, end_y]
+            
+            *drag_active_ptr = mouse_state.drag_active;
+            if (coords) {
+                coords[0] = mouse_state.drag_start_x;
+                coords[1] = mouse_state.drag_start_y;
+                coords[2] = mouse_state.drag_end_x;
+                coords[3] = mouse_state.drag_end_y;
+            }
+            break;
+        }
+        case 20: // render_selection syscall - highlight selected text
+        {
+            // For now, this is a placeholder syscall
+            // Selection rendering is handled by the shell directly
             break;
         }
     }

@@ -12,6 +12,9 @@
 #define EXT_SCANCODE_RIGHT     0x4D
 #define SCANCODE_LSHIFT       0x2A
 #define SCANCODE_RSHIFT       0x36
+#define SCANCODE_LCTRL        0x1D
+#define SCANCODE_RCTRL        0x1D  // Extended scancode
+#define SCANCODE_C            0x2E
 
 #define KEYBOARD_DATA_PORT     0x60
 #define EXTENDED_SCANCODE_BYTE 0xE0
@@ -44,6 +47,8 @@ struct KeyboardDriverState {
     bool keyboard_input_on;
     volatile char keyboard_buffer;  // TAMBAHKAN volatile
     bool shift_pressed;
+    bool ctrl_pressed;
+    bool ctrl_c_pressed;
 } __attribute__((packed));
 
 
@@ -61,6 +66,16 @@ void get_keyboard_buffer(char *buf);
 
 // Check if shift key is pressed
 bool is_shift_presseed(void);
+
+// Check if Ctrl+C was pressed and clear the flag
+bool is_ctrl_c_pressed(void);
+
+// Check if Ctrl is pressed
+bool is_ctrl_pressed(void);
+
+// Check if Shift is pressed
+bool is_shift_pressed(void);
+
 /* -- Keyboard Interrupt Service Routine -- */
 
 /**
