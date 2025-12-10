@@ -10,35 +10,6 @@
 #include "header/filesystem/ext2.h"
 #include "header/memory/paging.h"
 
-// void kernel_setup(void) {
-//     load_gdt(&_gdt_gdtr);
-//     pic_remap();
-//     initialize_idt();
-//     activate_keyboard_interrupt();
-//     framebuffer_clear();
-//     framebuffer_set_cursor(0, 0);
-//     initialize_filesystem_ext2();
-//     gdt_install_tss();
-//     set_tss_register();
-
-//     // Allocate first 4 MiB virtual memory
-//     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
-
-//     // Write shell into memory
-//     struct EXT2DriverRequest request = {
-//         .buf                   = (uint8_t*) 0,
-//         .name                  = "shell",
-//         .parent_inode          = 1,
-//         .buffer_size           = 0x100000,
-//         .name_len              = 5,
-//     };
-//     read(request);
-
-//     // Set TSS $esp pointer and jump into shell 
-//     set_tss_kernel_current_stack();
-//     kernel_execute_user_program((uint8_t*) 0);
-
-//     while (true);
 void kernel_setup(void) {
     load_gdt(&_gdt_gdtr);
     pic_remap();
@@ -48,21 +19,44 @@ void kernel_setup(void) {
     
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
-    
-    // framebuffer_write_string(0, 0, "[1] Initializing filesystem...", 0xE, 0x0);
     initialize_filesystem_ext2();
-    // framebuffer_write_string(0, 1, "[2] Filesystem OK", 0xA, 0x0);
     
-    // framebuffer_write_string(0, 2, "[3] Installing TSS...", 0xE, 0x0);
     gdt_install_tss();
     set_tss_register();
-    // framebuffer_write_string(0, 3, "[4] TSS OK", 0xA, 0x0);
-
-    // framebuffer_write_string(0, 4, "[5] Allocating paging...", 0xE, 0x0);
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
-    // framebuffer_write_string(0, 5, "[6] Paging OK", 0xA, 0x0);
+    uint32_t root_inode = 2;
+    
+    struct EXT2DriverRequest dir_req = {
+        .buf            = (void *)0,
+        .name           = "docs",
+        .parent_inode   = root_inode,
+        .buffer_size    = 0,
+        .name_len       = 4,
+        .is_directory   = true
+    };
+    write(&dir_req);
+    
+    char *test_content = "Hello World\nThis is a test file\ngrep should find this line\nAnother line here\nfinal line\n";
+    struct EXT2DriverRequest file_req = {
+        .buf            = (uint8_t *)test_content,
+        .name           = "testfile.txt",
+        .parent_inode   = root_inode,
+        .buffer_size    = 89,  // strlen of test_content
+        .name_len       = 12,
+        .is_directory   = false
+    };
+    write(&file_req);
 
-    // framebuffer_write_string(0, 6, "[7] Reading shell...", 0xE, 0x0);
+    char *readme_content = "Welcome to MentOS!\nThis is a simple operating system.\nYou can use: ls, cat, grep, find, touch\nTry: cat testfile.txt\nOr: cat testfile.txt | grep line\n";
+    struct EXT2DriverRequest readme_req = {
+        .buf            = (uint8_t *)readme_content,
+        .name           = "readme.txt",
+        .parent_inode   = root_inode,
+        .buffer_size    = 152,
+        .name_len       = 10,
+        .is_directory   = false
+    };
+    write(&readme_req);
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
         .name                  = "shell",
@@ -75,14 +69,10 @@ void kernel_setup(void) {
     int8_t retcode = read(request);
 
     if (retcode == 0) {
-        // framebuffer_write_string(0, 7, "[8] Shell loaded OK", 0xA, 0x0);
-        
-        // TAMBAHKAN INI - Set TSS dan execute shell
         set_tss_kernel_current_stack();
         kernel_execute_user_program((uint8_t*) 0);
         
     } else {
-        // framebuffer_write_string(0, 7, "[8] Shell FAIL! RC=", 0xC, 0x0);
         
         char rc_display = '0' + retcode;
         if (retcode < 0) {
@@ -103,8 +93,8 @@ void kernel_setup(void) {
             framebuffer_write_string(0, 8, "Error: Parent not dir", 0xC, 0x0);
         }
         
-        while(true); // STOP HERE
+        while(true);
     }
     
-    while (true); // Infinite loop jika shell return
+    while (true);
 }

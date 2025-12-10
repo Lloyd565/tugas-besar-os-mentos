@@ -70,6 +70,37 @@ struct Command {
     uint8_t argc;
 };
 
+// Pipeline support
+#define PIPE_BUFFER_SIZE 4096
+static char pipe_buffer[PIPE_BUFFER_SIZE];
+static uint32_t pipe_buffer_len = 0;
+static bool pipe_mode = false;
+
+// Print to screen or pipe buffer
+void print_or_pipe(char *str, uint8_t color) {
+    if (pipe_mode) {
+        // Append to pipe buffer
+        uint32_t len = strlen(str);
+        for (uint32_t i = 0; i < len && pipe_buffer_len < PIPE_BUFFER_SIZE - 1; i++) {
+            pipe_buffer[pipe_buffer_len++] = str[i];
+        }
+        pipe_buffer[pipe_buffer_len] = '\0';
+    } else {
+        syscall_puts(str, strlen(str), color);
+    }
+}
+
+void putchar_or_pipe(char c, uint8_t color) {
+    if (pipe_mode) {
+        if (pipe_buffer_len < PIPE_BUFFER_SIZE - 1) {
+            pipe_buffer[pipe_buffer_len++] = c;
+            pipe_buffer[pipe_buffer_len] = '\0';
+        }
+    } else {
+        syscall_putchar(c, color);
+    }
+}
+
 // Parse input into command and arguments
 void parse_input(char *input, struct Command *cmd) {
     memset(cmd, 0, sizeof(struct Command));
@@ -273,9 +304,9 @@ void cmd_cat(char *filename) {
         // Print file contents
         char *content = (char *)buf;
         for (uint32_t i = 0; i < BLOCK_SIZE * BLOCK_COUNT && content[i] != '\0'; i++) {
-            syscall_putchar(content[i], 0xF);
+            putchar_or_pipe(content[i], 0xF);
         }
-        print("\n", 0xF);
+        print_or_pipe("\n", 0xF);
     } else if (retcode == 1) {
         print("cat: not a regular file\n", 0xC);
     } else if (retcode == 3) {
@@ -373,13 +404,23 @@ void cmd_touch(char *filename) {
         return;
     }
     
+    // Remove trailing slash if present
+    uint32_t len = strlen(filename);
+    if (len > 0 && filename[len - 1] == '/') {
+        filename[len - 1] = '\0';
+        len--;
+    }
+    
+    // Create empty file buffer
     struct BlockBuffer buf;
+    memset(&buf, 0, sizeof(buf));
+    
     struct EXT2DriverRequest req = {
         .buf = &buf,
         .name = filename,
         .name_len = strlen(filename),
         .parent_inode = shell_state.current_dir_inode,
-        .buffer_size = 0,
+        .buffer_size = 0,  // Empty file
         .is_directory = false
     };
     
@@ -387,12 +428,172 @@ void cmd_touch(char *filename) {
     syscall_write(&req, &retcode);
     
     if (retcode == 0) {
-        print("File created\n", 0xA);
+        print("touch: ", 0xA);
+        print(filename, 0xA);
+        print(" created\n", 0xA);
     } else if (retcode == 1) {
         print("touch: file already exists\n", 0xC);
+    } else if (retcode == 2) {
+        print("touch: invalid parent directory\n", 0xC);
     } else {
-        print("touch: error creating file\n", 0xC);
+        print("touch: unknown error\n", 0xC);
     }
+}
+
+// Helper: find substring in string
+char *strstr_simple(char *haystack, char *needle) {
+    if (*needle == '\0') return haystack;
+    
+    for (; *haystack != '\0'; haystack++) {
+        char *h = haystack;
+        char *n = needle;
+        
+        while (*h != '\0' && *n != '\0' && *h == *n) {
+            h++;
+            n++;
+        }
+        
+        if (*n == '\0') return haystack;
+    }
+    return (char *)0;
+}
+
+void cmd_grep(char *pattern, char *filename) {
+    if (pattern[0] == '\0') {
+        print("grep: missing pattern\n", 0xC);
+        return;
+    }
+    
+    char *content;
+    uint32_t content_len;
+    struct BlockBuffer buf[BLOCK_COUNT];
+    
+    if (pipe_buffer_len > 0) {
+        // read from pipe
+        content = pipe_buffer;
+        content_len = pipe_buffer_len;
+    } else if (filename[0] != '\0') {
+        // read from file
+        struct EXT2DriverRequest req = {
+            .buf = buf,
+            .name = filename,
+            .name_len = strlen(filename),
+            .parent_inode = shell_state.current_dir_inode,
+            .buffer_size = BLOCK_SIZE * BLOCK_COUNT
+        };
+        
+        int8_t retcode;
+        syscall_read(&req, &retcode);
+        
+        if (retcode != 0) {
+            print("grep: cannot read file\n", 0xC);
+            return;
+        }
+        
+        content = (char *)buf;
+        content_len = BLOCK_SIZE * BLOCK_COUNT;
+    } else {
+        print("grep: no input (use: grep pattern file OR cmd | grep pattern)\n", 0xC);
+        return;
+    }
+    
+    // Process line by line
+    char line[512];
+    uint32_t line_idx = 0;
+    
+    for (uint32_t i = 0; i <= content_len; i++) {
+        if (content[i] == '\n' || content[i] == '\0' || i == content_len) {
+            line[line_idx] = '\0';
+            
+            // Check if pattern exists in line
+            if (line_idx > 0 && strstr_simple(line, pattern) != (char *)0) {
+                print(line, 0xF);
+                print("\n", 0xF);
+            }
+            
+            line_idx = 0;
+            if (content[i] == '\0') break;
+        } else if (line_idx < 511) {
+            line[line_idx++] = content[i];
+        }
+    }
+}
+
+void find_recursive(uint32_t dir_inode, char *path, char *target) {
+    struct BlockBuffer buf;
+    struct EXT2DriverRequest req = {
+        .buf = &buf,
+        .name = ".",
+        .name_len = 1,
+        .parent_inode = dir_inode,
+        .buffer_size = BLOCK_SIZE,
+        .is_directory = true
+    };
+    
+    int8_t retcode;
+    syscall_read_directory(&req, &retcode);
+    if (retcode != 0) return;
+    
+    uint32_t offset = 0;
+    struct EXT2DirectoryEntry *entry;
+    
+    while (offset < BLOCK_SIZE) {
+        entry = (struct EXT2DirectoryEntry *)(buf.buf + offset);
+        if (entry->rec_len == 0 || entry->inode == 0) break;
+        
+        char *name = (char *)(entry + 1);
+        
+        // Skip . and ..
+        if ((entry->name_len == 1 && name[0] == '.') ||
+            (entry->name_len == 2 && name[0] == '.' && name[1] == '.')) {
+            offset += entry->rec_len;
+            continue;
+        }
+        
+        char name_buf[64];
+        for (uint8_t i = 0; i < entry->name_len && i < 63; i++) {
+            name_buf[i] = name[i];
+        }
+        name_buf[entry->name_len] = '\0';
+        
+        // full pathnya
+        char fullpath[256];
+        uint32_t path_len = strlen(path);
+        
+        // curr path
+        for (uint32_t i = 0; i < path_len && i < 250; i++) {
+            fullpath[i] = path[i];
+        }
+        fullpath[path_len] = '\0';
+        
+        // append slash
+        if (strcmp(path, "/") != 0) {
+            fullpath[path_len] = '/';
+            fullpath[path_len + 1] = '\0';
+        }
+        
+        // append name
+        strcat(fullpath, name_buf);
+        
+        if (strcmp(name_buf, target) == 0) {
+            print(fullpath, 0xA);
+            print("\n", 0xF);
+        }
+        if (entry->file_type == EXT2_FT_DIR) {
+            find_recursive(entry->inode, fullpath, target);
+        }
+        
+        offset += entry->rec_len;
+    }
+}
+
+void cmd_find(char *target) {
+    if (target[0] == '\0') {
+        print("find: missing filename\n", 0xC);
+        return;
+    }
+    
+    find_recursive(2, "/", target);
 }
 
 // Execute command
@@ -420,23 +621,29 @@ void execute_command(struct Command *cmd) {
         cmd_echo(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "touch") == 0) {
         cmd_touch(cmd->args[0]);
+    } else if (strcmp(cmd->cmd, "grep") == 0) {
+        cmd_grep(cmd->args[0], cmd->args[1]);
+    } else if (strcmp(cmd->cmd, "find") == 0) {
+        cmd_find(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
         syscall(10,0,0,0);
     } else if (strcmp(cmd->cmd, "help") == 0) {
-        print("Available commands:\n", 0xE);
-        print("  ls       - list directory\n", 0xF);
-        print("  cd       - change directory\n", 0xF);
-        print("  pwd      - print working directory\n", 0xF);
-        print("  mkdir    - create directory\n", 0xF);
-        print("  cat      - display file\n", 0xF);
-        print("  cp       - copy file\n", 0xF);
-        print("  rm       - remove file/dir\n", 0xF);
-        print("  mv       - move/rename\n", 0xF);
-        print("  echo     - print text\n", 0xF);
-        print("  touch    - create empty file\n", 0xF);
-        print("  clear    - clear screen\n", 0xF);
-        print("  help     - show this help\n", 0xF);
+        print_or_pipe("Available commands:\n", 0xE);
+        print_or_pipe("  ls       - list directory\n", 0xF);
+        print_or_pipe("  cd       - change directory\n", 0xF);
+        print_or_pipe("  pwd      - print working directory\n", 0xF);
+        print_or_pipe("  mkdir    - create directory\n", 0xF);
+        print_or_pipe("  cat      - display file\n", 0xF);
+        print_or_pipe("  cp       - copy file\n", 0xF);
+        print_or_pipe("  rm       - remove file/dir\n", 0xF);
+        print_or_pipe("  mv       - move/rename\n", 0xF);
+        print_or_pipe("  echo     - print text\n", 0xF);
+        print_or_pipe("  touch    - create empty file\n", 0xF);
+        print_or_pipe("  grep     - search pattern in file\n", 0xF);
+        print_or_pipe("  find     - search for files\n", 0xF);
+        print_or_pipe("  clear    - clear screen\n", 0xF);
+        print_or_pipe("  help     - show this help\n", 0xF);
     } else {
         print(cmd->cmd, 0xC);
         print(": command not found\n", 0xC);
@@ -494,8 +701,40 @@ int main(void) {
         
         read_line(input_buffer, INPUT_BUFFER_SIZE);
         
-        parse_input(input_buffer, &cmd);
-        execute_command(&cmd);
+        // check pipe
+        char *pipe_pos = (char *)0;
+        for (uint32_t i = 0; input_buffer[i] != '\0'; i++) {
+            if (input_buffer[i] == '|') {
+                pipe_pos = &input_buffer[i];
+                break;
+            }
+        }
+        
+        if (pipe_pos != (char *)0) {
+            // split command
+            *pipe_pos = '\0';
+            char *left_cmd = input_buffer;
+            char *right_cmd = pipe_pos + 1;
+            
+            while (*right_cmd == ' ') right_cmd++;
+            pipe_buffer_len = 0;
+            pipe_buffer[0] = '\0';
+            // exec left
+            pipe_mode = true;
+            parse_input(left_cmd, &cmd);
+            execute_command(&cmd);
+            pipe_mode = false;
+            // exec right
+            parse_input(right_cmd, &cmd);
+            execute_command(&cmd);
+            // clear pipe
+            pipe_buffer_len = 0;
+            pipe_buffer[0] = '\0';
+        } else {
+            // Normal exec
+            parse_input(input_buffer, &cmd);
+            execute_command(&cmd);
+        }
     }
     
     return 0;
