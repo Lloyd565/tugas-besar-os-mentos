@@ -87,7 +87,6 @@
 //         process_create_user_process(request);
 //         scheduler_init();
 //         scheduler_switch_to_next_process();
-        
 //     } else {
 //         // framebuffer_write_string(0, 7, "[8] Shell FAIL! RC=", 0xC, 0x0);
         
@@ -115,11 +114,14 @@
     
 //     while (true); // Infinite loop jika shell return
 // }
+
+
 void kernel_setup(void) {
     load_gdt(&_gdt_gdtr);
     pic_remap();
     initialize_idt();
     activate_keyboard_interrupt();
+    keyboard_state_activate();
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
     initialize_filesystem_ext2();
@@ -134,14 +136,15 @@ void kernel_setup(void) {
         .buffer_size           = 0x100000,
         .name_len              = 5,
     };
-    // read(request);
+    read(request);
     // Set TSS.esp0 for interprivilege interrupt
     set_tss_kernel_current_stack();
-
     // Create init process and execute it
     process_create_user_process(request);
     scheduler_init();
     scheduler_switch_to_next_process();
-    scheduler_switch_to_next_process();
-    framebuffer_write_string(5, 8, "Among", 0xC, 0x0);
+    // activate_timer_interrupt();
+    // scheduler_switch_to_next_process();
+    // framebuffer_write_string(5, 8, "Among", 0xC, 0x0);
+    while (true);
 }

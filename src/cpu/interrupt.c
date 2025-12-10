@@ -49,12 +49,13 @@ void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
         case PIC1_OFFSET + IRQ_TIMER:
             pic_ack(IRQ_TIMER);
-            // timer_isr(frame);
+            timer_isr(frame);
             break;
         case 14:
             __asm__("hlt");
             break;
         case PIC1_OFFSET + IRQ_KEYBOARD:
+            // pic_ack(IRQ_KEYBOARD);
             keyboard_isr();
             break;
         case 0x30:
