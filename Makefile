@@ -42,6 +42,7 @@ kernel:
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cpu/idt.c -o $(OUTPUT_FOLDER)/idt.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cpu/interrupt.c -o $(OUTPUT_FOLDER)/interrupt.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/driver/keyboard.c -o $(OUTPUT_FOLDER)/keyboard.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/driver/speaker.c -o $(OUTPUT_FOLDER)/speaker.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/ext2.c -o $(OUTPUT_FOLDER)/ext2.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/disk.c -o $(OUTPUT_FOLDER)/disk.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/paging.c -o $(OUTPUT_FOLDER)/paging.o
@@ -57,6 +58,7 @@ kernel:
 		$(OUTPUT_FOLDER)/idt.o \
 		$(OUTPUT_FOLDER)/interrupt.o \
 		$(OUTPUT_FOLDER)/keyboard.o \
+		$(OUTPUT_FOLDER)/speaker.o \
 		$(OUTPUT_FOLDER)/ext2.o \
 		$(OUTPUT_FOLDER)/disk.o \
 		$(OUTPUT_FOLDER)/paging.o \
