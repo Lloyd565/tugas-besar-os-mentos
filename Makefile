@@ -27,7 +27,14 @@ disk:
 
 run: iso
 	@echo "Running OS in QEMU..."
-	@qemu-system-i386 -s -drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk -cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso
+	@qemu-system-i386 -s \
+		-drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk \
+		-cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso \
+		-audiodev sdl,id=audio0 \
+		-machine pcspk-audiodev=audio0 2>/dev/null || \
+	qemu-system-i386 -s \
+		-drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk \
+		-cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso
 
 kernel:
 	@mkdir -p $(OUTPUT_FOLDER)
@@ -96,11 +103,13 @@ user-shell:
 	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/crt0.s -o crt0.o
 	@$(CC)  $(CFLAGS) -fno-pie $(SOURCE_FOLDER)/user-shell.c -o user-shell.o
 	@$(CC)  $(CFLAGS) -fno-pie $(SOURCE_FOLDER)/stdlib/string.c -o string.o
+	@$(CC)  $(CFLAGS) -fno-pie $(SOURCE_FOLDER)/cpu/portio.c -o portio.o
+	@$(CC)  $(CFLAGS) -fno-pie $(SOURCE_FOLDER)/driver/speaker.c -o speaker.o
 	@$(LIN) -T $(SOURCE_FOLDER)/user-linker.ld -melf_i386 --oformat=binary \
-		crt0.o user-shell.o string.o -o $(OUTPUT_FOLDER)/shell
-	@echo Linking object shell object files and generate flat binary...
+		crt0.o user-shell.o string.o portio.o speaker.o -o $(OUTPUT_FOLDER)/shell
+	@echo Linking object shell object files and generate ELF32 for debugging...
 	@$(LIN) -T $(SOURCE_FOLDER)/user-linker.ld -melf_i386 --oformat=elf32-i386 \
-		crt0.o user-shell.o string.o -o $(OUTPUT_FOLDER)/shell_elf
+		crt0.o user-shell.o string.o portio.o speaker.o -o $(OUTPUT_FOLDER)/shell_elf
 	@echo Linking object shell object files and generate ELF32 for debugging...
 	@size --target=binary $(OUTPUT_FOLDER)/shell
 	@rm -f *.o
@@ -108,8 +117,58 @@ user-shell:
 insert-shell: inserter user-shell
 	@echo Inserting shell into root directory... 
 	@cd $(OUTPUT_FOLDER); ./inserter shell 2 $(DISK_NAME).bin
+	@echo Inserting music file...
+	@cp music.txt bin/music.txt
+	@cd $(OUTPUT_FOLDER); ./inserter music.txt 2 $(DISK_NAME).bin
+
+run-pulse: iso
+	@echo "Running OS in QEMU with PulseAudio..."
+	@qemu-system-i386 -s \
+		-drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk \
+		-cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso \
+		-audiodev pa,id=audio0 \
+		-machine pcspk-audiodev=audio0 || true
+
+run-alsa: iso
+	@echo "Running OS in QEMU with ALSA..."
+	@qemu-system-i386 -s \
+		-drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk \
+		-cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso \
+		-audiodev alsa,id=audio0 \
+		-machine pcspk-audiodev=audio0 || true
+
+run-file: iso
+	@echo "Running OS in QEMU and saving audio to /tmp/qemu-audio.wav..."
+	@qemu-system-i386 -s \
+		-drive file=$(OUTPUT_FOLDER)/$(DISK_NAME).bin,format=raw,if=ide,index=0,media=disk \
+		-cdrom $(OUTPUT_FOLDER)/$(ISO_NAME).iso \
+		-audiodev wav,id=audio0,path=/tmp/qemu-audio.wav \
+		-machine pcspk-audiodev=audio0
+	@echo "Audio saved to /tmp/qemu-audio.wav - you can play it with: paplay /tmp/qemu-audio.wav"
 
 .PHONY: all
 
 all: clean disk user-shell insert-shell run
+
+run-with-music:
+	@if [ -z "$(MUSIC_FILE)" ]; then echo "Usage: make run-with-music MUSIC_FILE=agartha.txt"; exit 1; fi
+	@$(MAKE) clean
+	@$(MAKE) disk
+	@$(MAKE) user-shell
+	@$(MAKE) insert-shell
+	@$(MAKE) insert-music MUSIC_FILE=$(MUSIC_FILE)
+	@$(MAKE) run
+
+insert-music:
+	@echo "Usage: make insert-music MUSIC_FILE=path/to/file.txt"
+	@echo "Example: make insert-music MUSIC_FILE=agartha.txt"
+	@if [ -z "$(MUSIC_FILE)" ]; then echo "Error: MUSIC_FILE not specified"; exit 1; fi
+	@if [ ! -f "$(MUSIC_FILE)" ]; then echo "Error: File not found: $(MUSIC_FILE)"; exit 1; fi
+	@BASENAME=$$(basename "$(MUSIC_FILE)"); \
+	echo "Copying $$BASENAME to bin/"; \
+	cp "$(MUSIC_FILE)" "bin/$$BASENAME"; \
+	echo "Inserting $$BASENAME into disk..."; \
+	if [ ! -f "bin/inserter" ]; then $(MAKE) inserter; fi; \
+	if [ ! -f "bin/storage.bin" ]; then $(MAKE) disk; fi; \
+	cd bin && ./inserter "$$BASENAME" 2 storage.bin
 	@echo "=== SELESAI SEMUA TASK ==="

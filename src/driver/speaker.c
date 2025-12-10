@@ -6,9 +6,9 @@
  * This is a simple busy-wait delay
  */
 static void delay_ms(uint32_t ms) {
-    // Very light delay - just do some iterations
+    // Increased delay multiplier for better timing on QEMU
     // Each iteration is roughly a few nanoseconds on QEMU
-    for (uint32_t i = 0; i < ms * 50; i++) {
+    for (uint32_t i = 0; i < ms * 55000; i++) {
         __asm__ volatile("nop");
     }
 }

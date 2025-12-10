@@ -128,14 +128,12 @@ void syscall(struct InterruptFrame frame) {
             );
             break;
         case 6: {
-            char *str = (char*) frame.cpu.general.ebx;
-            uint32_t len = frame.cpu.general.ecx;
-            uint8_t color = (uint8_t) frame.cpu.general.edx;
-            
-            // Print character by character karena puts() mungkin bermasalah
-            for (uint32_t i = 0; i < len && str[i] != '\0'; i++) {
-                putchar(str[i], color, 0x0);
-            }
+            puts(
+                (char*) frame.cpu.general.ebx,
+                (uint32_t) frame.cpu.general.ecx,
+                (uint8_t) frame.cpu.general.edx,
+                0x0
+            );
             break;
         }
         case 7: 
