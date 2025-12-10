@@ -57,6 +57,10 @@ void syscall_activate_keyboard() {
     syscall(7, 0, 0, 0);
 }
 
+void syscall_speaker_beep(uint16_t frequency, uint32_t duration) {
+    syscall(11, (uint32_t)frequency, duration, 0);
+}
+
 // Shell state
 struct ShellState {
     uint32_t current_dir_inode;
@@ -362,9 +366,59 @@ void cmd_mv(char *src, char *dest) {
     cmd_rm(src);
 }
 
+// Command: beep - simple beep with default frequency
+void cmd_beep() {
+    print("Beeping...\n", 0xA);
+    syscall_speaker_beep(1000, 200);
+    print("Done!\n", 0xA);
+}
+
+// Command: speaker - beep with custom frequency and duration
+void cmd_speaker(char *freq_str, char *duration_str) {
+    if (freq_str[0] == '\0' || duration_str[0] == '\0') {
+        print("Usage: speaker <frequency> <duration>\n", 0xC);
+        print("Example: speaker 1000 500\n", 0xC);
+        return;
+    }
+    
+    // Parse frequency
+    uint16_t frequency = 0;
+    for (int i = 0; freq_str[i] != '\0' && freq_str[i] >= '0' && freq_str[i] <= '9'; i++) {
+        frequency = frequency * 10 + (freq_str[i] - '0');
+    }
+    
+    // Parse duration
+    uint32_t duration = 0;
+    for (int i = 0; duration_str[i] != '\0' && duration_str[i] >= '0' && duration_str[i] <= '9'; i++) {
+        duration = duration * 10 + (duration_str[i] - '0');
+    }
+    
+    if (frequency < 20 || frequency > 4000) {
+        print("Error: frequency must be 20-4000 Hz\n", 0xC);
+        return;
+    }
+    
+    if (duration < 1 || duration > 10000) {
+        print("Error: duration must be 1-10000 ms\n", 0xC);
+        return;
+    }
+    
+    print("Beeping with ", 0xA);
+    print(freq_str, 0xA);
+    print(" Hz for ", 0xA);
+    print(duration_str, 0xA);
+    print(" ms...\n", 0xA);
+    
+    syscall_speaker_beep(frequency, duration);
+    
+    print("Done!\n", 0xA);
+}
+
 // Execute command
 void execute_command(struct Command *cmd) {
-    if (cmd->cmd[0] == '\0') return;
+    if (cmd->cmd[0] == '\0') {
+        return;  // Empty command, silent return
+    }
     
     if (strcmp(cmd->cmd, "ls") == 0) {
         cmd_ls();
@@ -386,6 +440,10 @@ void execute_command(struct Command *cmd) {
     } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
         syscall(10,0,0,0);
+    } else if (strcmp(cmd->cmd, "beep") == 0) {
+        cmd_beep();
+    } else if (strcmp(cmd->cmd, "speaker") == 0) {
+        cmd_speaker(cmd->args[0], cmd->args[1]);
     } else if (strcmp(cmd->cmd, "help") == 0) {
         print("Available commands:\n", 0xE);
         print("  ls       - list directory\n", 0xF);
@@ -397,6 +455,8 @@ void execute_command(struct Command *cmd) {
         print("  rm       - remove file/dir\n", 0xF);
         print("  mv       - move/rename\n", 0xF);
         print("  clear    - clear screen\n", 0xF);
+        print("  beep     - simple beep (1000Hz, 200ms)\n", 0xF);
+        print("  speaker  - beep with custom frequency/duration\n", 0xF);
         print("  help     - show this help\n", 0xF);
     } else {
         print(cmd->cmd, 0xC);
@@ -435,10 +495,10 @@ int main(void) {
     strcpy(shell_state.current_path, "/");
     
     char input_buffer[INPUT_BUFFER_SIZE];
+    char path[512];  // MOVED OUTSIDE LOOP
     struct Command cmd;
 
     while (true) {
-        char path[512];
         char *user = "root";
         char *at = "@";
         char *host = "MentOS2130";
