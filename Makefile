@@ -34,7 +34,7 @@ kernel:
 	@echo "Compiling assembly and C files..."
 	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/kernel-entrypoint.s -o $(OUTPUT_FOLDER)/kernel-entrypoint.o
 	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/intsetup.s -o $(OUTPUT_FOLDER)/intsetup.o
-	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/scheduler/process_context_switch.s -o $(OUTPUT_FOLDER)/process_context_switch.o
+	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/scheduler/process_context_switch.S -o $(OUTPUT_FOLDER)/process_context_switch.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/kernel.c -o $(OUTPUT_FOLDER)/kernel.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cpu/gdt.c -o $(OUTPUT_FOLDER)/gdt.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/stdlib/string.c -o $(OUTPUT_FOLDER)/string.o

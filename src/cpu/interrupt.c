@@ -69,6 +69,22 @@ void activate_keyboard_interrupt(void) {
     out(PIC1_DATA, in(PIC1_DATA) & ~(1 << IRQ_KEYBOARD));
 }
 
+/**
+ * FIX for Issue #3: Update TSS.esp0 based on current kernel stack
+ * This must be called to update the kernel stack pointer in TSS
+ * for proper interrupt handling on privilege level transitions.
+ * 
+ * This is called during context switches to ensure TSS points to
+ * the correct kernel stack for the next interrupt.
+ */
+void update_tss_kernel_stack(void) {
+    uint32_t stack_ptr;
+    // Reading base stack frame - current ESP at entry of this function
+    __asm__ volatile ("mov %%ebp, %0": "=r"(stack_ptr) : /* <Empty> */);
+    // Add 8 because 4 for ret address and other 4 is for stack_ptr variable
+    _interrupt_tss_entry.esp0 = stack_ptr + 8;
+}
+
 
 void set_tss_kernel_current_stack(void) {
     uint32_t stack_ptr;

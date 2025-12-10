@@ -182,6 +182,9 @@ void main_interrupt_handler(struct InterruptFrame frame);
 // Set kernel stack in TSS
 void set_tss_kernel_current_stack(void);
 
+// Update kernel stack in TSS (FIX for Issue #3)
+void update_tss_kernel_stack(void);
+
 void syscall(struct InterruptFrame frame);
 
 void activate_timer_interrupt(void);
