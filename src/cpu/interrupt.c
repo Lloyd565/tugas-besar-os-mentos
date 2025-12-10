@@ -48,14 +48,15 @@ void pic_remap(void) {
 void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
         case PIC1_OFFSET + IRQ_TIMER:
-            pic_ack(IRQ_TIMER);
-            timer_isr(frame);
+            pic_ack(PIC1_OFFSET + IRQ_TIMER);
+            // timer_isr(frame);
+            // scheduler_switch_to_next_process();
             break;
         case 14:
             __asm__("hlt");
             break;
         case PIC1_OFFSET + IRQ_KEYBOARD:
-            // pic_ack(IRQ_KEYBOARD);
+            pic_ack(IRQ_KEYBOARD);
             keyboard_isr();
             break;
         case 0x30:
@@ -198,6 +199,7 @@ void timer_isr(struct InterruptFrame frame){
     };
     // framebuffer_write_string(5, 0, "context saved", 0, 0);
     //save context, schedule for next process
+    // __asm__ volatile("cli");
     scheduler_save_context_to_current_running_pcb(ctx);
     scheduler_switch_to_next_process();
     // framebuffer_write_string(6, 0, "scheduled next process", 0, 0);

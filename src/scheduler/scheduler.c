@@ -29,6 +29,7 @@ void scheduler_init(void) { activate_timer_interrupt(); }
 void scheduler_save_context_to_current_running_pcb(struct Context ctx){
     struct ProcessControlBlock* currPCB = process_get_current_running_pcb_pointer();
     if (currPCB != NULL) { currPCB->context = ctx; }
+        
 }
 
 /**
