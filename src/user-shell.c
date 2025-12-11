@@ -1,14 +1,13 @@
-#include <stdint.h>           // uint32_t, int8_t, dll
-#include <stdbool.h>          // bool, true, false
-#include "header/filesystem/ext2.h"  // EXT2 structures
-#include "header/stdlib/string.h"    // memset, memcmp
+#include <stdint.h>
+#include <stdbool.h>
+#include "header/filesystem/ext2.h"
+#include "header/stdlib/string.h"
 #include "header/text/framebuffer.h"
 
 #define BLOCK_COUNT 16
 #define INPUT_BUFFER_SIZE 256
 #define MAX_ARGS 8
 
-// Syscall wrapper functions - dengan prefix syscall_ untuk menghindari conflict
 void syscall(uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx) {
     __asm__ volatile("mov %0, %%ebx" : : "r"(ebx));
     __asm__ volatile("mov %0, %%ecx" : : "r"(ecx));
@@ -150,6 +149,189 @@ void parse_input(char *input, struct Command *cmd) {
 void print(char *str, uint8_t color) {
     syscall_puts(str, strlen(str), color);
 }
+
+// PATH RESOLUTION HELPERS 
+
+/**
+ * path_to_parent_inode - Resolve a path to its parent directory inode and filename.
+ * Supports absolute paths (starting with /) and relative paths.
+ * Handles "." and ".." navigation.
+ * 
+ * @param path_input Input path
+ * @param parent_inode_out Output: inode of the parent directory
+ * @param name_out Output: name of the final component
+ * @param name_len_out Output: length of the name
+ * @return true if success
+ */
+static bool path_to_parent_inode(const char *path_input, uint32_t *parent_inode_out,
+                                 char *name_out, uint8_t *name_len_out) {
+    if (!path_input || !parent_inode_out || !name_out || !name_len_out) return false;
+    if (path_input[0] == '\0') return false;
+    if (strcmp((char*)path_input, "/") == 0) return false;
+
+    uint32_t inode = (path_input[0] == '/') ? 2 : shell_state.current_dir_inode;
+    char path_copy[128];
+    uint32_t len = strlen(path_input);
+    if (len >= 128) len = 127;
+    memcpy(path_copy, path_input, len);
+    path_copy[len] = '\0';
+    char *token = path_copy;
+    if (token[0] == '/') token++;
+    char *last_comp = (char *)0;
+    uint8_t last_len = 0;
+    while (true) {
+        char *slash = token;
+        while (*slash && *slash != '/') slash++;
+        bool last = (*slash == '\0');
+        char saved = *slash;
+        *slash = '\0';
+        if (token[0] == '\0' || (token[0] == '.' && token[1] == '\0')) {
+            // nothing
+        } 
+        // Handle ".."
+        else if (token[0] == '.' && token[1] == '.' && token[2] == '\0') {
+            // Read current dir to find ".." entry
+            struct BlockBuffer bufp;
+            struct EXT2DriverRequest reqp = {
+                .buf = &bufp,
+                .name = ".",
+                .name_len = 1,
+                .parent_inode = inode,
+                .buffer_size = BLOCK_SIZE,
+                .is_directory = true
+            };
+            int8_t retp;
+            syscall_read_directory(&reqp, &retp);
+            if (retp != 0) return false;
+
+            // First entry is ".", second is ".."
+            struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)bufp.buf;
+            struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)((uint8_t *)dot + dot->rec_len);
+            inode = dotdot->inode;
+        } 
+        else {
+            if (last) {
+                // This is the final component (the name we want)
+                last_comp = token;
+                last_len = (uint8_t)strlen(token);
+            } else {
+                // Intermediate directory - navigate into it
+                struct BlockBuffer dirbuf;
+                struct EXT2DriverRequest req = {
+                    .buf = &dirbuf,
+                    .name = token,
+                    .name_len = strlen(token),
+                    .parent_inode = inode,
+                    .buffer_size = BLOCK_SIZE,
+                    .is_directory = true
+                };
+                int8_t ret;
+                syscall_read_directory(&req, &ret);
+                if (ret != 0) return false;
+
+                // Get inode from "." entry
+                struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)dirbuf.buf;
+                inode = dot->inode;
+            }
+        }
+
+        *slash = saved;
+        if (last) break;
+        token = slash + 1;
+    }
+
+    if (last_comp == (char *)0 || last_len == 0 || last_len > 31) return false;
+
+    *parent_inode_out = inode;
+    *name_len_out = last_len;
+    memcpy(name_out, last_comp, last_len);
+    name_out[last_len] = '\0';
+    return true;
+}
+
+/**
+ * path_to_dir_inode - Resolve a directory path to its inode.
+ * Handles ".", "..", and paths like "../.." or "foo/.."
+ * 
+ * @param path_input Input path
+ * @param inode_out Output: inode of the directory
+ * @return true if success
+ */
+static bool path_to_dir_inode(const char *path_input, uint32_t *inode_out) {
+    if (!path_input || !inode_out) return false;
+    
+    if (strcmp((char*)path_input, "/") == 0) {
+        *inode_out = 2;  // root inode
+        return true;
+    }
+    if (strcmp((char*)path_input, ".") == 0) {
+        *inode_out = shell_state.current_dir_inode;
+        return true;
+    }
+    uint32_t inode = (path_input[0] == '/') ? 2 : shell_state.current_dir_inode;
+    char path_copy[128];
+    uint32_t len = strlen(path_input);
+    if (len >= 128) len = 127;
+    memcpy(path_copy, path_input, len);
+    path_copy[len] = '\0';    
+    char *token = path_copy;
+    if (token[0] == '/') token++;
+    while (*token) {
+        char *slash = token;
+        while (*slash && *slash != '/') slash++;
+        char saved = *slash;
+        *slash = '\0';
+        if (token[0] == '\0' || (token[0] == '.' && token[1] == '\0')) {
+            // nothing
+        }
+        // Handle ".."
+        else if (token[0] == '.' && token[1] == '.' && token[2] == '\0') {
+            struct BlockBuffer bufp;
+            struct EXT2DriverRequest reqp = {
+                .buf = &bufp,
+                .name = ".",
+                .name_len = 1,
+                .parent_inode = inode,
+                .buffer_size = BLOCK_SIZE,
+                .is_directory = true
+            };
+            int8_t retp;
+            syscall_read_directory(&reqp, &retp);
+            if (retp != 0) return false;
+            
+            struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)bufp.buf;
+            struct EXT2DirectoryEntry *dotdot = (struct EXT2DirectoryEntry *)((uint8_t *)dot + dot->rec_len);
+            inode = dotdot->inode;
+        }
+        else {
+            struct BlockBuffer dirbuf;
+            struct EXT2DriverRequest req = {
+                .buf = &dirbuf,
+                .name = token,
+                .name_len = strlen(token),
+                .parent_inode = inode,
+                .buffer_size = BLOCK_SIZE,
+                .is_directory = true
+            };
+            int8_t ret;
+            syscall_read_directory(&req, &ret);
+            if (ret != 0) return false;
+            
+            struct EXT2DirectoryEntry *dot = (struct EXT2DirectoryEntry *)dirbuf.buf;
+            inode = dot->inode;
+        }
+        
+        *slash = saved;
+        if (saved == '\0') break;
+        token = slash + 1;
+    }
+    
+    *inode_out = inode;
+    return true;
+}
+
+// =================== COMMAND IMPLEMENTATIONS ===================
+
 // Command: ls - list directory contents
 void cmd_ls() {
     struct BlockBuffer buf;
@@ -190,15 +372,12 @@ void cmd_ls() {
         for (uint8_t i = 0; i < entry->name_len; i++) {
             name_buf[i] = name[i];
         }
-        
         uint8_t color = (entry->file_type == EXT2_FT_DIR) ? 0xB : 0xF;
         print(name_buf, color);
-        
         if (entry->file_type == EXT2_FT_DIR) {
             print("/", 0xB);
         }
-        print("  ", 0xF);
-        
+        print("  ", 0xF);        
         offset += entry->rec_len;
     }
     print("\n", 0xF);
@@ -213,7 +392,6 @@ void cmd_cd(char *dirname) {
     if (strcmp(dirname, ".") == 0) {
         return;
     }
-    // Step 1: Get the inode
     struct EXT2DriverRequest req = {
         .name = dirname,
         .name_len = strlen(dirname),
@@ -228,7 +406,6 @@ void cmd_cd(char *dirname) {
         print("cd: directory not found\n", 0xC);
         return;
     }
-    // Step 2: Get resolved path
     char new_path[256];
     memset(new_path, 0, 256);
     
@@ -240,10 +417,7 @@ void cmd_cd(char *dirname) {
     
     retcode = -1;
     syscall_get_resolved_path(&path_req, new_path, &retcode);
-
-    // Step 3: Update shell state
     shell_state.current_dir_inode = new_inode;
-    
     if (new_path[0] != '\0') {
         strcpy(shell_state.current_path, new_path);
     } else {
@@ -316,20 +490,31 @@ void cmd_cat(char *filename) {
     }
 }
 
-// Command: cp - copy file
-void cmd_cp(char *src, char *dest) {
+// Command: cp - copy file (returns true on success)
+// Supports path resolution: cp ../file dest, cp /abs/path dest
+bool cmd_cp(char *src, char *dest, bool silent) {
     if (src[0] == '\0' || dest[0] == '\0') {
-        print("cp: missing operand\n", 0xC);
-        return;
+        if (!silent) print("cp: missing operand\n", 0xC);
+        return false;
+    }
+    
+    // Resolve source path
+    uint32_t src_parent;
+    char src_name[32];
+    uint8_t src_name_len;
+    
+    if (!path_to_parent_inode(src, &src_parent, src_name, &src_name_len)) {
+        if (!silent) print("cp: source not found\n", 0xC);
+        return false;
     }
     
     // Read source file
     struct BlockBuffer buf[BLOCK_COUNT];
     struct EXT2DriverRequest read_req = {
         .buf = buf,
-        .name = src,
-        .name_len = strlen(src),
-        .parent_inode = shell_state.current_dir_inode,
+        .name = src_name,
+        .name_len = src_name_len,
+        .parent_inode = src_parent,
         .buffer_size = BLOCK_SIZE * BLOCK_COUNT
     };
     
@@ -337,40 +522,92 @@ void cmd_cp(char *src, char *dest) {
     syscall_read(&read_req, &retcode);
     
     if (retcode != 0) {
-        print("cp: cannot read source file\n", 0xC);
-        return;
+        if (!silent) print("cp: cannot read source file\n", 0xC);
+        return false;
+    }
+    
+    // Resolve destination path
+    uint32_t dest_parent;
+    char dest_name[32];
+    uint8_t dest_name_len;
+    
+    // Check if dest is a directory - use source filename
+    uint32_t dest_dir_inode;
+    if (path_to_dir_inode(dest, &dest_dir_inode)) {
+        // dest is a directory, put file there with same name
+        dest_parent = dest_dir_inode;
+        memcpy(dest_name, src_name, src_name_len);
+        dest_name[src_name_len] = '\0';
+        dest_name_len = src_name_len;
+    } else {
+        // dest is a path to a file
+        if (!path_to_parent_inode(dest, &dest_parent, dest_name, &dest_name_len)) {
+            if (!silent) print("cp: invalid destination\n", 0xC);
+            return false;
+        }
     }
     
     // Write to destination
     struct EXT2DriverRequest write_req = {
         .buf = buf,
-        .name = dest,
-        .name_len = strlen(dest),
-        .parent_inode = shell_state.current_dir_inode,
+        .name = dest_name,
+        .name_len = dest_name_len,
+        .parent_inode = dest_parent,
         .buffer_size = BLOCK_SIZE * BLOCK_COUNT,
         .is_directory = false
     };
     
     syscall_write(&write_req, &retcode);
     
+    // If file already exists (retcode == 1), delete it first 
+    if (retcode == 1) {
+        struct EXT2DriverRequest del_req = {
+            .name = dest_name,
+            .name_len = dest_name_len,
+            .parent_inode = dest_parent,
+            .is_directory = false
+        };
+        int8_t del_retcode;
+        syscall_delete(&del_req, &del_retcode);
+        
+        // Retry write after deletion
+        syscall_write(&write_req, &retcode);
+    }
+    
     if (retcode == 0) {
-        print("File copied\n", 0xA);
+        if (!silent) print("File copied\n", 0xA);
+        return true;
     } else {
-        print("cp: error copying file\n", 0xC);
+        if (!silent) print("cp: error copying file\n", 0xC);
+        return false;
     }
 }
 
-// Command: rm - remove file/directory
-void cmd_rm(char *name) {
-    if (name[0] == '\0') {
+// Command: rm - remove file
+// Only supports deleting files, not directories
+void cmd_rm(char *arg1, char *arg2) {
+    (void)arg2;  // unused, kept for API compatibility
+    
+    if (arg1[0] == '\0') {
         print("rm: missing operand\n", 0xC);
+        return;
+    }
+    
+    // Resolve path
+    uint32_t parent_inode;
+    char name[32];
+    uint8_t name_len;
+    
+    if (!path_to_parent_inode(arg1, &parent_inode, name, &name_len)) {
+        print("rm: not found\n", 0xC);
         return;
     }
     
     struct EXT2DriverRequest req = {
         .name = name,
-        .name_len = strlen(name),
-        .parent_inode = shell_state.current_dir_inode
+        .name_len = name_len,
+        .parent_inode = parent_inode,
+        .is_directory = false
     };
     
     int8_t retcode;
@@ -379,18 +616,49 @@ void cmd_rm(char *name) {
     if (retcode == 0) {
         print("Removed\n", 0xA);
     } else if (retcode == 1) {
-        print("rm: file not found\n", 0xC);
-    } else if (retcode == 2) {
-        print("rm: directory not empty\n", 0xC);
+        print("rm: not found\n", 0xC);
     } else {
-        print("rm: error removing\n", 0xC);
+        print("rm: error (is it a directory?)\n", 0xC);
     }
 }
 
 // Command: mv - move/rename file
+// Supports: mv src dest, mv ../file dest, mv file dir/
 void cmd_mv(char *src, char *dest) {
-    cmd_cp(src, dest);
-    cmd_rm(src);
+    if (src[0] == '\0' || dest[0] == '\0') {
+        print("mv: missing operand\n", 0xC);
+        return;
+    }
+    
+    // Copy dengan mode silent (true) karena kita akan handle pesan sendiri
+    bool copy_success = cmd_cp(src, dest, true);
+    
+    if (copy_success) {
+        // Resolve source for deletion
+        uint32_t src_parent;
+        char src_name[32];
+        uint8_t src_name_len;
+        
+        if (path_to_parent_inode(src, &src_parent, src_name, &src_name_len)) {
+            struct EXT2DriverRequest del_req = {
+                .name = src_name,
+                .name_len = src_name_len,
+                .parent_inode = src_parent
+            };
+            int8_t retcode;
+            syscall_delete(&del_req, &retcode);
+        }
+        
+        print("mv: ", 0xA);
+        print(src, 0xA);
+        print(" -> ", 0xA);
+        print(dest, 0xA);
+        print(" success\n", 0xA);
+    } else {
+        print("mv: failed to move ", 0xC);
+        print(src, 0xC);
+        print("\n", 0xC);
+    }
 }
 
 void cmd_echo (char *text) {
@@ -612,9 +880,9 @@ void execute_command(struct Command *cmd) {
     } else if (strcmp(cmd->cmd, "cat") == 0) {
         cmd_cat(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "cp") == 0) {
-        cmd_cp(cmd->args[0], cmd->args[1]);
+        cmd_cp(cmd->args[0], cmd->args[1], false);
     } else if (strcmp(cmd->cmd, "rm") == 0) {
-        cmd_rm(cmd->args[0]);
+        cmd_rm(cmd->args[0], cmd->args[1]);
     } else if (strcmp(cmd->cmd, "mv") == 0) {
         cmd_mv(cmd->args[0], cmd->args[1]);
     } else if (strcmp(cmd->cmd, "echo") == 0) {

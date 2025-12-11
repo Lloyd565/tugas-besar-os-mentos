@@ -41,7 +41,6 @@ const char keyboard_scancode_1_to_ascii_map_shifted[256] = {
       0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,    0,   0,    0,    0,
 };
 
-// Hapus 'static'
 struct KeyboardDriverState keyboard_state = {
     .read_extended_mode = false,
     .keyboard_input_on = false,
@@ -58,8 +57,6 @@ void keyboard_state_deactivate(void){
 }
 
 void get_keyboard_buffer(char *buf) {
-    // Ini dipanggil dari kernel, bukan user space
-    // Langsung ambil tanpa busy-wait
     *buf = keyboard_state.keyboard_buffer;
     keyboard_state.keyboard_buffer = '\0';
 }

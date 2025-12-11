@@ -42,20 +42,20 @@ void putchar (char c, uint8_t fg, uint8_t bg) {
         }
     }
     if (cursor_row >= FRAMEBUFFER_HEIGHT) {
-        // SCROLL UP
+        // SCROLL UP - copy each row to the previous row
+        // Note: FRAMEBUFFER_MEMORY_OFFSET is uint16_t*, so index = row * WIDTH + col
         for (uint8_t row = 1; row < FRAMEBUFFER_HEIGHT; row++) {
             for (uint8_t col = 0; col < FRAMEBUFFER_WIDTH; col++) {
-                FRAMEBUFFER_MEMORY_OFFSET[(row - 1) * FRAMEBUFFER_WIDTH*2 + col*2] =
-                    FRAMEBUFFER_MEMORY_OFFSET[row * FRAMEBUFFER_WIDTH*2 + col*2];
-                FRAMEBUFFER_MEMORY_OFFSET[(row - 1) * FRAMEBUFFER_WIDTH*2 + col*2 + 1] =
-                    FRAMEBUFFER_MEMORY_OFFSET[row * FRAMEBUFFER_WIDTH*2 + col*2 + 1];
+                uint16_t src_pos = row * FRAMEBUFFER_WIDTH + col;
+                uint16_t dst_pos = (row - 1) * FRAMEBUFFER_WIDTH + col;
+                FRAMEBUFFER_MEMORY_OFFSET[dst_pos] = FRAMEBUFFER_MEMORY_OFFSET[src_pos];
             }
         }
         // CLEAR LAST LINE
-        for (uint8_t col = 0; col < FRAMEBUFFER_WIDTH; col++)
-        {
-            FRAMEBUFFER_MEMORY_OFFSET[(FRAMEBUFFER_HEIGHT - 1) * FRAMEBUFFER_WIDTH*2 + col*2] = ' ';
-            FRAMEBUFFER_MEMORY_OFFSET[(FRAMEBUFFER_HEIGHT - 1) * FRAMEBUFFER_WIDTH*2 + col*2 + 1] = (bg << 4) | (fg & 0x0F);
+        for (uint8_t col = 0; col < FRAMEBUFFER_WIDTH; col++) {
+            uint16_t pos = (FRAMEBUFFER_HEIGHT - 1) * FRAMEBUFFER_WIDTH + col;
+            uint8_t color = (bg << 4) | (fg & 0x0F);
+            FRAMEBUFFER_MEMORY_OFFSET[pos] = (color << 8) | ' ';
         }
         cursor_row = FRAMEBUFFER_HEIGHT - 1;
     }

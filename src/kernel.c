@@ -36,7 +36,7 @@ void kernel_setup(void) {
     };
     write(&dir_req);
 
-    char *readme_content = "Welkam to MentOS!\nThis is a simple operating system.\nYou can use: ls, cat, grep, find, touch\nTry: cat testfile.txt\nOr: cat testfile.txt | grep line\n";
+    char *readme_content = "Welkam to MentOS!.\nTry ts bru: cat testfile.txt\nOr: cat testfile.txt | grep line\n";
     struct EXT2DriverRequest readme_req = {
         .buf            = (uint8_t *)readme_content,
         .name           = "readme.txt",
