@@ -72,7 +72,7 @@ bool is_shift_presseed(void) {
 
 bool is_ctrl_c_pressed(void) {
     bool result = keyboard_state.ctrl_c_pressed;
-    keyboard_state.ctrl_c_pressed = false;  // Clear the flag after reading
+    keyboard_state.ctrl_c_pressed = false; 
     return result;
 }
 
@@ -122,10 +122,15 @@ void keyboard_isr(void) {
                 } else if (key == SCANCODE_LCTRL) {
                     keyboard_state.ctrl_pressed = !is_break;
                 } else if (!is_break) {
-                    // Check for Ctrl+C - tapi HANYA jika tidak ada Shift (untuk memungkinkan Ctrl+Shift+C)
+                    // Check for Ctrl+C (interrupt) - HANYA Ctrl+C, bukan Ctrl+Shift+C
                     if (keyboard_state.ctrl_pressed && !keyboard_state.shift_pressed && key == SCANCODE_C) {
                         keyboard_state.ctrl_c_pressed = true;
-                    } else {
+                    } 
+                    // Ctrl+Shift+C reserved untuk copy mouse selection - jangan process sebagai character
+                    else if (keyboard_state.ctrl_pressed && keyboard_state.shift_pressed && key == SCANCODE_C) {
+                        // Ignore - this is for copy mouse selection, handled elsewhere
+                    } 
+                    else {
                         char ascii_char;
                         if (keyboard_state.shift_pressed) {
                             ascii_char = keyboard_scancode_1_to_ascii_map_shifted[key];

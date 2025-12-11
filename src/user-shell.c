@@ -87,6 +87,12 @@ void syscall_getchar(char *buf) {
     syscall(4, (uint32_t)buf, 0, 0);
 }
 
+char syscall_getchar_nonblocking(void) {
+    char buf = 0;
+    syscall(21, (uint32_t)&buf, 0, 0);
+    return buf;
+}
+
 void syscall_putchar(char c, uint8_t color) {
     // Track single character output
     track_output(&c, 1);
@@ -975,20 +981,18 @@ void read_line(char *buffer, uint32_t max_len) {
     char c;
     
     while (true) {
-        // Update mouse selection on each iteration (before blocking on getchar)
+        // Try to get character non-blocking
+        c = syscall_getchar_nonblocking();
+        
+        // Update mouse selection on every iteration (even if no keyboard input)
         update_mouse_selection();
         
-        // Check for Ctrl+Shift+C (copy) BEFORE blocking on getchar
-        if (syscall_is_ctrl_pressed() && syscall_is_shift_pressed()) {
-            // Delay a bit to allow character to come through
-            for (volatile uint32_t j = 0; j < 100000; j++);
-            continue;  // Don't block, just skip this iteration
+        // If no character received, continue polling for mouse updates
+        if (c == 0) {
+            // Small delay to avoid busy-waiting
+            for (volatile uint32_t j = 0; j < 10000; j++);
+            continue;
         }
-        
-        syscall_getchar(&c);
-        
-        // Update mouse selection again after getchar returns
-        update_mouse_selection();
         
         // Check for Ctrl+C (ASCII 3)
         if (c == 0x03) {

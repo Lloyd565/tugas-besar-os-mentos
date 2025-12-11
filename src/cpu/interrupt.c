@@ -271,5 +271,17 @@ void syscall(struct InterruptFrame frame) {
             // Selection rendering is handled by the shell directly
             break;
         }
+        case 21: // getchar_nonblocking - return char if available, otherwise 0
+        {
+            char *buf = (char*)frame.cpu.general.ebx;
+            // Check if keyboard has buffered character
+            if (keyboard_state.keyboard_buffer != '\0') {
+                *buf = keyboard_state.keyboard_buffer;
+                keyboard_state.keyboard_buffer = '\0';
+            } else {
+                *buf = 0;  // No character available
+            }
+            break;
+        }
     }
 }
