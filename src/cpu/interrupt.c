@@ -7,6 +7,11 @@
 #include "header/filesystem/ext2.h"
 #include "header/text/framebuffer.h"
 #include "header/stdlib/string.h"
+#include "header/scheduler/scheduler.h"
+#include "header/process/process.h"
+#include "../cmos.h"
+
+extern struct ProcessControlBlock _process_list[PROCESS_COUNT_MAX];
 
 struct TSSEntry _interrupt_tss_entry = {
     .ss0  = GDT_KERNEL_DATA_SEGMENT_SELECTOR,
@@ -49,10 +54,15 @@ void pic_remap(void) {
 
 void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
+        case PIC1_OFFSET + IRQ_TIMER:
+            pic_ack(IRQ_TIMER);
+            timer_isr(frame);
+            break;
         case 14:
             __asm__("hlt");
             break;
         case PIC1_OFFSET + IRQ_KEYBOARD:
+            pic_ack(IRQ_KEYBOARD);
             keyboard_isr();
             break;
         case PIC2_OFFSET + IRQ_MOUSE:
@@ -72,6 +82,22 @@ void activate_mouse_interrupt(void) {
     out(PIC2_DATA, in(PIC2_DATA) & ~(1 << IRQ_MOUSE));
 }
 
+/**
+ * FIX for Issue #3: Update TSS.esp0 based on current kernel stack
+ * This must be called to update the kernel stack pointer in TSS
+ * for proper interrupt handling on privilege level transitions.
+ * 
+ * This is called during context switches to ensure TSS points to
+ * the correct kernel stack for the next interrupt.
+ */
+void update_tss_kernel_stack(void) {
+    uint32_t stack_ptr;
+    // Reading base stack frame - current ESP at entry of this function
+    __asm__ volatile ("mov %%ebp, %0": "=r"(stack_ptr) : /* <Empty> */);
+    // Add 8 because 4 for ret address and other 4 is for stack_ptr variable
+    _interrupt_tss_entry.esp0 = stack_ptr + 8;
+}
+
 void set_tss_kernel_current_stack(void) {
     uint32_t stack_ptr;
     // Reading base stack frame instead esp
@@ -81,7 +107,6 @@ void set_tss_kernel_current_stack(void) {
 }
 
 void syscall(struct InterruptFrame frame) {
-    // puts("SYSCALL CALLED\n", 0xE, 0xF, 0x0); //DEBUGGGGGGGGGGGGGG
     switch (frame.cpu.general.eax) {
         case 0:
             *((int8_t*) frame.cpu.general.ecx) = read(
@@ -250,9 +275,6 @@ void syscall(struct InterruptFrame frame) {
         }
         case 19: // get_mouse_drag_state syscall
         {
-            // ebx = &drag_active, ecx = &start_x, edx = &start_y
-            // Note: need 4 more registers for end_x and end_y, so return via structure
-            // For now, just return whether drag is active
             bool *drag_active_ptr = (bool*)frame.cpu.general.ebx;
             uint32_t *coords = (uint32_t*)frame.cpu.general.ecx; // Array: [start_x, start_y, end_x, end_y]
             
@@ -265,11 +287,118 @@ void syscall(struct InterruptFrame frame) {
             }
             break;
         }
-        case 20: // render_selection syscall - highlight selected text
+        case 20: // kill process
         {
-            // For now, this is a placeholder syscall
-            // Selection rendering is handled by the shell directly
+            int32_t pid = *(int32_t*)frame.cpu.general.ebx;
+            
+            struct ProcessControlBlock *curr = process_get_current_running_pcb_pointer();
+            bool is_self = (curr != NULL && (int32_t)curr->metadata.pid == pid);
+            
+            if (process_destroy(pid)) {
+                *(int8_t*)frame.cpu.general.ecx = 0; // Success
+                if (is_self) {
+                    scheduler_switch_to_next_process();
+                }
+            } else {
+                 *(int8_t*)frame.cpu.general.ecx = -1; // Failed
+            }
             break;
         }
+        case 21: // exec
+        {
+            struct EXT2DriverRequest *req = (struct EXT2DriverRequest*) frame.cpu.general.ebx;
+            int8_t *ret = (int8_t*) frame.cpu.general.ecx;
+            
+            // 1. Resolve Inode to determine file size
+            uint32_t inode = 0;
+            if (get_inode(*req, &inode) != 0) {
+                framebuffer_write_string(0, 0, "Exec: Inode not found", 0xC, 0x0);
+                *ret = PROCESS_CREATE_FAIL_FS_READ_FAILURE;
+                break;
+            }
+            
+            struct EXT2Inode inode_data;
+            read_inode(inode, &inode_data);
+            
+            // Check if it is a file
+            if (inode_data.i_mode & EXT2_S_IFDIR) {
+                framebuffer_write_string(0, 0, "Exec: Is directory", 0xC, 0x0);
+                *ret = 1; // Attempting to exec a directory
+                break;
+            }
+
+            // 2. Set buffer_size for reading
+            req->buffer_size = inode_data.i_size;
+            
+            // 3. Create process
+            *ret = process_create_user_process(*req);
+            if (*ret != 0) {
+                 char buf[2] = {*ret + '0', '\0'};
+                 framebuffer_write_string(0, 50, "Exec: Create fail code:", 0xC, 0x0);
+                 framebuffer_write_string(0, 75, buf, 0xC, 0x0);
+            }
+            break;
+        }
+        case 22: // ps - get process info
+        {
+            uint32_t index = (uint32_t) frame.cpu.general.ebx;
+            void *output_buffer = (void*) frame.cpu.general.ecx;
+            
+            if (index < PROCESS_COUNT_MAX) {
+                memcpy(output_buffer, &(_process_list[index].metadata), sizeof(_process_list[index].metadata));
+            } else {
+                memset(output_buffer, 0, sizeof(_process_list[index].metadata)); 
+            }
+            break;
+        }
+        case 23: // get_time
+        {
+            struct Time *time_ptr = (struct Time*) frame.cpu.general.ebx;
+            cmos_get_time(time_ptr);
+            break;
+        }
+        case 24: // puts_at
+        {
+            char *str = (char*) frame.cpu.general.ebx;
+            uint32_t combined = frame.cpu.general.edx;
+            uint8_t c = combined & 0xFF;
+            uint8_t r = (combined >> 8) & 0xFF;
+            uint8_t co = (combined >> 16) & 0xFF;
+            
+            framebuffer_write_string(r, co, str, c, 0);
+            break;
+        }
+    }
+}
+
+void activate_timer_interrupt(void) {
+    __asm__ volatile("cli");
+    // Setup how often PIT fire
+    uint32_t pit_timer_counter_to_fire = PIT_TIMER_COUNTER;
+    out(PIT_COMMAND_REGISTER_PIO, PIT_COMMAND_VALUE);
+    out(PIT_CHANNEL_0_DATA_PIO, (uint8_t) (pit_timer_counter_to_fire & 0xFF));
+    out(PIT_CHANNEL_0_DATA_PIO, (uint8_t) ((pit_timer_counter_to_fire >> 8) & 0xFF));
+
+    // Activate the interrupt
+    out(PIC1_DATA, in(PIC1_DATA) & ~(1 << IRQ_TIMER));
+}
+
+void timer_isr(struct InterruptFrame frame){
+    // get context to save
+    struct ProcessControlBlock *curr_pcb = process_get_current_running_pcb_pointer();
+    
+    if (curr_pcb == NULL) {
+        // No running process (maybe destroyed), switch immediately
+        scheduler_switch_to_next_process();
+    } else if (curr_pcb->metadata.state == RUNNING && (frame.int_stack.cs & 0x3) == 0x3){
+        struct Context ctx = {
+            .cpu = frame.cpu,
+            .eip = frame.int_stack.eip,
+            .eflags = frame.int_stack.eflags,
+            .esp = frame.cpu.stack.esp,
+            .page_directory_virtual_addr = paging_get_current_page_directory_addr()
+        };
+        scheduler_save_context_to_current_running_pcb(ctx);
+        scheduler_switch_to_next_process();
     }
 }

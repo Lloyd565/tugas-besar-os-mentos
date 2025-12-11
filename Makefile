@@ -41,6 +41,7 @@ kernel:
 	@echo "Compiling assembly and C files..."
 	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/kernel-entrypoint.s -o $(OUTPUT_FOLDER)/kernel-entrypoint.o
 	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/intsetup.s -o $(OUTPUT_FOLDER)/intsetup.o
+	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/scheduler/process_context_switch.S -o $(OUTPUT_FOLDER)/process_context_switch.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/kernel.c -o $(OUTPUT_FOLDER)/kernel.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cpu/gdt.c -o $(OUTPUT_FOLDER)/gdt.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/stdlib/string.c -o $(OUTPUT_FOLDER)/string.o
@@ -54,10 +55,14 @@ kernel:
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/ext2.c -o $(OUTPUT_FOLDER)/ext2.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/disk.c -o $(OUTPUT_FOLDER)/disk.o
 	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/paging.c -o $(OUTPUT_FOLDER)/paging.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/process/process.c -o $(OUTPUT_FOLDER)/process.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/scheduler/scheduler.c -o $(OUTPUT_FOLDER)/scheduler.o
+	@$(CC) $(CFLAGS) $(SOURCE_FOLDER)/cmos.c -o $(OUTPUT_FOLDER)/cmos.o
 	@echo "Linking object files and generating ELF32 kernel..."
 	@$(LD) $(LFLAGS) \
 		$(OUTPUT_FOLDER)/kernel-entrypoint.o \
 		$(OUTPUT_FOLDER)/intsetup.o \
+		$(OUTPUT_FOLDER)/process_context_switch.o \
 		$(OUTPUT_FOLDER)/kernel.o \
 		$(OUTPUT_FOLDER)/gdt.o \
 		$(OUTPUT_FOLDER)/string.o \
@@ -71,6 +76,9 @@ kernel:
 		$(OUTPUT_FOLDER)/ext2.o \
 		$(OUTPUT_FOLDER)/disk.o \
 		$(OUTPUT_FOLDER)/paging.o \
+		$(OUTPUT_FOLDER)/process.o \
+		$(OUTPUT_FOLDER)/scheduler.o \
+		$(OUTPUT_FOLDER)/cmos.o \
 		-o $(OUTPUT_FOLDER)/kernel
 
 iso: kernel
@@ -122,6 +130,23 @@ insert-shell: inserter user-shell
 	@echo Inserting music file...
 	@cp music.txt bin/music.txt
 	@cd $(OUTPUT_FOLDER); ./inserter music.txt 2 $(DISK_NAME).bin
+
+clock:
+	@$(ASM) $(AFLAGS) $(SOURCE_FOLDER)/crt0.s -o crt0.o
+	@$(CC)  $(CFLAGS) -fno-pie $(SOURCE_FOLDER)/clock.c -o clock.o
+	@$(CC)  $(CFLAGS) -fno-pie $(SOURCE_FOLDER)/stdlib/string.c -o string.o
+	@$(LIN) -T $(SOURCE_FOLDER)/user-linker.ld -melf_i386 --oformat=binary \
+		crt0.o clock.o string.o -o $(OUTPUT_FOLDER)/clock
+	@echo Linking object clock object files and generate flat binary...
+	@$(LIN) -T $(SOURCE_FOLDER)/user-linker.ld -melf_i386 --oformat=elf32-i386 \
+		crt0.o clock.o string.o -o $(OUTPUT_FOLDER)/clock_elf
+	@echo Linking object clock object files and generate ELF32 for debugging...
+	@size --target=binary $(OUTPUT_FOLDER)/clock
+	@rm -f *.o
+
+insert-clock: inserter clock
+	@echo Inserting clock into root directory... 
+	@cd $(OUTPUT_FOLDER); ./inserter clock 2 $(DISK_NAME).bin
 
 run-pulse: iso
 	@echo "Running OS in QEMU with PulseAudio..."
