@@ -9,23 +9,24 @@
 #include "header/driver/disk.h"
 #include "header/filesystem/ext2.h"
 #include "header/memory/paging.h"
+#include "header/process/process.h"
+#include "header/scheduler/scheduler.h"
 
 void kernel_setup(void) {
     load_gdt(&_gdt_gdtr);
     pic_remap();
     initialize_idt();
     activate_keyboard_interrupt();
-    keyboard_state_activate(); 
-    
+    keyboard_state_activate();
     framebuffer_clear();
     framebuffer_set_cursor(0, 0);
     initialize_filesystem_ext2();
-    
     gdt_install_tss();
     set_tss_register();
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
     uint32_t root_inode = 2;
     
+    // Create docs directory
     struct EXT2DriverRequest dir_req = {
         .buf            = (void *)0,
         .name           = "docs",
@@ -36,16 +37,22 @@ void kernel_setup(void) {
     };
     write(&dir_req);
 
+    // Create readme.txt with proper size calculation
     char *readme_content = "Welkam to MentOS!.\nTry ts bru: cat testfile.txt\nOr: cat testfile.txt | grep line\n";
+    uint32_t readme_len = 0;
+    while (readme_content[readme_len] != '\0') readme_len++;
+    
     struct EXT2DriverRequest readme_req = {
         .buf            = (uint8_t *)readme_content,
         .name           = "readme.txt",
         .parent_inode   = root_inode,
-        .buffer_size    = 152,
+        .buffer_size    = readme_len,
         .name_len       = 10,
         .is_directory   = false
     };
     write(&readme_req);
+    
+    // Load shell
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
         .name                  = "shell",
@@ -54,15 +61,18 @@ void kernel_setup(void) {
         .name_len              = 5
     };
 
-
     int8_t retcode = read(request);
 
     if (retcode == 0) {
+        // Set TSS.esp0 for interprivilege interrupt
         set_tss_kernel_current_stack();
-        kernel_execute_user_program((uint8_t*) 0);
         
+        // Create init process and start scheduler
+        process_create_user_process(request);
+        scheduler_init();
+        scheduler_switch_to_next_process();
     } else {
-        
+        // Error handling
         char rc_display = '0' + retcode;
         if (retcode < 0) {
             framebuffer_write(19, 7, '-', 0xC, 0x0);

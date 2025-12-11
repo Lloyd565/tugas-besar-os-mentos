@@ -5,6 +5,23 @@
 #include "header/text/framebuffer.h"
 #include "header/driver/speaker.h"   // speaker_beep functions
 
+#define PROCESS_NAME_LENGTH_MAX 32
+#define PROCESS_COUNT_MAX 16
+
+typedef enum PROCESS_STATE {
+    READY,
+    RUNNING,
+    BLOCKED,
+    DESTROYED
+} PROCESS_STATE;
+
+struct ProcessInfo {
+    uint32_t pid;
+    PROCESS_STATE state;
+    char name[PROCESS_NAME_LENGTH_MAX];
+    bool is_active;
+};
+
 #define BLOCK_COUNT 16
 #define INPUT_BUFFER_SIZE 256
 #define MAX_ARGS 8
@@ -83,7 +100,11 @@ void syscall_delete(struct EXT2DriverRequest *request, int8_t *retcode) {
 }
 
 void syscall_getchar(char *buf) {
-    syscall(4, (uint32_t)buf, 0, 0);
+    char c = 0;
+    while (c == 0) {
+        syscall(4, (uint32_t)&c, 0, 0);
+    }
+    *buf = c;
 }
 
 void syscall_putchar(char c, uint8_t color) {
@@ -184,6 +205,21 @@ void syscall_activate_keyboard() {
     syscall(7, 0, 0, 0);
 }
 
+void syscall_kill(int32_t pid, int8_t *retcode) {
+    syscall(11, (uint32_t)&pid, (uint32_t)retcode, 0);
+}
+
+void syscall_exec(struct EXT2DriverRequest *request, int8_t *retcode) {
+    syscall(12, (uint32_t)request, (uint32_t)retcode, 0);
+}
+
+void syscall_get_process_info(uint32_t index, struct ProcessInfo *pcb) {
+    syscall(13, index, (uint32_t)pcb, 0);
+}
+
+void syscall_puts_at(char *str, uint32_t len, uint8_t color, uint8_t row, uint8_t col) {
+    uint32_t combined = color | (row << 8) | (col << 16);
+    syscall(15, (uint32_t)str, len, combined);
 void syscall_mouse_init(void) {
     syscall(13, 0, 0, 0);
 }
@@ -582,6 +618,24 @@ void cmd_cd(char *dirname) {
         print("cd: directory not found\n", 0xC);
         return;
     }
+
+    struct BlockBuffer check_buf;
+    struct EXT2DriverRequest check_req = {
+        .buf = &check_buf,
+        .name = "",
+        .name_len = 0,
+        .parent_inode = new_inode,
+        .buffer_size = BLOCK_SIZE
+    };
+    
+    int8_t dir_check;
+    syscall_read_directory(&check_req, &dir_check);
+    
+    if (dir_check != 0) {
+        print("cd: not a directory\n", 0xC);
+        return;
+    }
+    // Step 2: Get resolved path
     char new_path[256];
     memset(new_path, 0, 256);
     
@@ -1067,6 +1121,124 @@ void cmd_grep(char *pattern, char *filename) {
     }
 }
 
+void cmd_kill(char *pid_str) {
+    if (pid_str[0] == '\0') {
+        print("kill: missing pid\n", 0xC);
+        return;
+    }
+    
+    // Simple atoi
+    int32_t pid = 0;
+    for (int i = 0; pid_str[i] != '\0'; i++) {
+        if (pid_str[i] >= '0' && pid_str[i] <= '9') {
+            pid = pid * 10 + (pid_str[i] - '0');
+        } else {
+            print("kill: invalid pid\n", 0xC);
+            return;
+        }
+    }
+    
+    // Check process name
+    struct ProcessInfo pcb;
+    bool process_found = false;
+    bool is_shell = false;
+    bool is_clock = false;
+    
+    for (uint32_t i = 0; i < PROCESS_COUNT_MAX; i++) {
+        syscall_get_process_info(i, &pcb);
+        if (pcb.is_active && (int32_t)pcb.pid == pid) {
+            process_found = true;
+            if (strcmp(pcb.name, "shell") == 0) is_shell = true;
+            if (strcmp(pcb.name, "clock") == 0) is_clock = true;
+            break;
+        }
+    }
+    
+    if (!process_found) {
+        print("kill: failed (pid not found)\n", 0xC);
+        return;
+    }
+    
+    if (is_shell) {
+        print("Error: Cannot kill shell\n", 0xC);
+        return;
+    }
+    
+    int8_t ret;
+    syscall_kill(pid, &ret);
+    
+    if (ret == 0) {
+        print("Process killed\n", 0xA); // Success
+        if (is_clock) {
+            // Clear clock display at Row 24, Col 71, Len 8
+            // 0xF is White
+            syscall_puts_at("        ", 8, 0xF, 24, 71);
+        }
+    } else {
+        print("kill: failed\n", 0xC);
+    }
+}
+
+void cmd_exec(char *filename) {
+    if (filename[0] == '\0') {
+        print("exec: missing filename\n", 0xC);
+        return;
+    }
+    
+    struct EXT2DriverRequest req = {
+        .buf = (uint8_t*)   0, // Load at address 0
+        .name = filename,
+        .name_len = strlen(filename),
+        .parent_inode = 2,
+        .buffer_size = 0x100000 // Will be set by kernel
+    };
+    
+    int8_t ret;
+    syscall_exec(&req, &ret);
+    
+    if (ret != 0) {
+        print("exec: failed rc=", 0xC);
+        char buf[4];
+        if (ret < 0) {
+            print("-", 0xC);
+            ret = -ret;
+        }
+        buf[0] = ret + '0';
+        buf[1] = '\n';
+        buf[2] = '\0';
+        print(buf, 0xC);
+    }
+}
+
+void cmd_ps() {
+    print("PID  State    Name\n", 0xE);
+    struct ProcessInfo pcb;
+    
+    for (uint32_t i = 0; i < PROCESS_COUNT_MAX; i++) {
+        syscall_get_process_info(i, &pcb);
+        
+        if (pcb.is_active) {
+            char pid_buf[16];
+            snprintf(pid_buf, 16, "%d", pcb.pid);
+            print(pid_buf, 0xF);
+            print("    ", 0xF); // Padding
+            
+            char *state_str = "UNKNOWN";
+            switch (pcb.state) {
+                case READY: state_str = "READY  "; break;
+                case RUNNING: state_str = "RUNNING"; break;
+                case BLOCKED: state_str = "BLOCKED"; break;
+                case DESTROYED: state_str = "DESTROY"; break; 
+            }
+            print(state_str, 0xF);
+            print("  ", 0xF);
+            
+            print(pcb.name, 0xF);
+            print("\n", 0xF);
+        }
+    }
+}
+
 void find_recursive(uint32_t dir_inode, char *path, char *target) {
     struct BlockBuffer buf;
     struct EXT2DriverRequest req = {
@@ -1144,6 +1316,19 @@ void cmd_find(char *target) {
     find_recursive(2, "/", target);
 }
 
+void cmd_clock() {
+    struct ProcessInfo pcb;
+    for (uint32_t i = 0; i < PROCESS_COUNT_MAX; i++) {
+        syscall_get_process_info(i, &pcb);
+        if (pcb.is_active && strcmp(pcb.name, "clock") == 0) {
+            print("Error: Clock is already running\n", 0xC);
+            return;
+        }
+    }
+    cmd_exec("clock");
+}
+
+
 // Execute command
 // Command: gui - file manager with mouse support
 void execute_command(struct Command *cmd) {
@@ -1176,6 +1361,14 @@ void execute_command(struct Command *cmd) {
         cmd_grep(cmd->args[0], cmd->args[1]);
     } else if (strcmp(cmd->cmd, "find") == 0) {
         cmd_find(cmd->args[0]);
+    } else if (strcmp(cmd->cmd, "exec") == 0) {
+        cmd_exec(cmd->args[0]);
+    } else if (strcmp(cmd->cmd, "kill") == 0) {
+        cmd_kill(cmd->args[0]);
+    } else if (strcmp(cmd->cmd, "ps") == 0) {
+        cmd_ps();
+    } else if (strcmp(cmd->cmd, "clock") == 0) {
+        cmd_clock();
     } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
         syscall(10,0,0,0);
@@ -1212,6 +1405,10 @@ void execute_command(struct Command *cmd) {
         print_or_pipe("  touch    - create empty file\n", 0xF);
         print_or_pipe("  grep     - search pattern in file\n", 0xF);
         print_or_pipe("  find     - search for files\n", 0xF);
+        print_or_pipe("  exec     - execute program\n", 0xF);
+        print_or_pipe("  kill     - kill process\n", 0xF);
+        print_or_pipe("  ps       - list processes\n", 0xF);
+        print_or_pipe("  clock    - show clock\n", 0xF);
         print_or_pipe("  clear    - clear screen\n", 0xF);
         print_or_pipe("  beep     - simple beep (1000Hz, 500ms)\n", 0xF);
         print_or_pipe("  speaker  - beep with custom frequency/duration\n", 0xF);

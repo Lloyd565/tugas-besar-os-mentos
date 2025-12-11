@@ -140,6 +140,4 @@ void keyboard_isr(void) {
             }
         }
     }
-
-    pic_ack(IRQ_KEYBOARD);
 }

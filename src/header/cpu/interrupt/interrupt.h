@@ -58,6 +58,21 @@
 #define IRQ_PRIMARY_ATA  14
 #define IRQ_SECOND_ATA   15
 
+#define PIT_MAX_FREQUENCY   1193182
+#define PIT_TIMER_FREQUENCY 1000
+#define PIT_TIMER_COUNTER   (PIT_MAX_FREQUENCY / PIT_TIMER_FREQUENCY)
+
+#define PIT_COMMAND_REGISTER_PIO          0x43
+#define PIT_COMMAND_VALUE_BINARY_MODE     0b0
+#define PIT_COMMAND_VALUE_OPR_SQUARE_WAVE (0b011 << 1)
+#define PIT_COMMAND_VALUE_ACC_LOHIBYTE    (0b11  << 4)
+#define PIT_COMMAND_VALUE_CHANNEL         (0b00  << 6) 
+#define PIT_COMMAND_VALUE (PIT_COMMAND_VALUE_BINARY_MODE | PIT_COMMAND_VALUE_OPR_SQUARE_WAVE | PIT_COMMAND_VALUE_ACC_LOHIBYTE | PIT_COMMAND_VALUE_CHANNEL)
+
+#define PIT_CHANNEL_0_DATA_PIO 0x40
+
+
+
 /**
  * CPURegister, store CPU registers values.
  * 
@@ -72,8 +87,8 @@ struct CPURegister {
         uint32_t esi;
     } __attribute__((packed)) index;
     struct {
-        uint32_t esp;
         uint32_t ebp;
+        uint32_t esp;
     } __attribute__((packed)) stack;
     struct {
         uint32_t ebx;
@@ -88,7 +103,7 @@ struct CPURegister {
         uint32_t ds;
     } __attribute__((packed)) segment;
 } __attribute__((packed));
-
+    
 /**
  * InterruptStack, data pushed by CPU when interrupt / exception is raised.
  * Refer to Intel x86 Vol 3a: Figure 6-4 Stack usage on transfer to Interrupt.
@@ -167,6 +182,12 @@ void main_interrupt_handler(struct InterruptFrame frame);
 // Set kernel stack in TSS
 void set_tss_kernel_current_stack(void);
 
+// Update kernel stack in TSS (FIX for Issue #3)
+void update_tss_kernel_stack(void);
+
 void syscall(struct InterruptFrame frame);
 
+void activate_timer_interrupt(void);
+
+void timer_isr(struct InterruptFrame frame);
 #endif

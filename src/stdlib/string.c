@@ -96,6 +96,34 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                     *strptr++ = *s++;
                     len++;
                 }
+            } else if (*ptr == 'd') {
+                int val = va_arg(args, int);
+                char num_buf[32];
+                int i = 0;
+                
+                if (val == 0) {
+                    num_buf[i++] = '0';
+                } else {
+                    int is_neg = 0;
+                    if (val < 0) {
+                        is_neg = 1;
+                        val = -val;
+                    }
+                    
+                    while (val > 0) {
+                        num_buf[i++] = (val % 10) + '0';
+                        val /= 10;
+                    }
+                    
+                    if (is_neg) {
+                        num_buf[i++] = '-';
+                    }
+                }
+                
+                while (i > 0 && len < size - 1) {
+                    *strptr++ = num_buf[--i];
+                    len++;
+                }
             }
         } else {
             *strptr++ = *ptr;
