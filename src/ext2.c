@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "header/stdlib/string.h"
 #include "header/filesystem/ext2.h"
+// #include "header/text/framebuffer.h"
 
 static struct EXT2Superblock superblock;
 static struct EXT2BlockGroupDescriptorTable bgdt;
@@ -385,6 +386,15 @@ int8_t get_inode(struct EXT2DriverRequest request, uint32_t *result_inode)
         }
     }
     
+    // // DEBUG
+    // char dbg[2] = {0,0};
+    // framebuffer_write_string(0, 20, "Inode Req:", 0xE, 0);
+    // for(int k=0; k<request.name_len; k++) {
+    //     dbg[0] = request.name[k];
+    //     framebuffer_write_string(0, 31+k, dbg, 0xE, 0);
+    // }
+    
+    // Check if path contains '/'es
     // Special cases
     if (final_name_len == 0 || (final_name_len == 1 && final_name[0] == '.')) {
         *result_inode = parent_inode;

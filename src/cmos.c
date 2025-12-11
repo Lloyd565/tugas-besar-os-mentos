@@ -1,4 +1,4 @@
-#include "cmos.h"               // Change this each year!
+#include "cmos.h"
 
 int century_register = 0x00;                                // Set by ACPI table parsing code if possible
 
@@ -103,4 +103,15 @@ void read_rtc() {
             year += (CURRENT_YEAR / 100) * 100;
             if(year < CURRENT_YEAR) year += 100;
       }
+      }
+
+
+void cmos_get_time(struct Time *time) {
+    read_rtc();
+    time->second = second;
+    time->minute = minute;
+    time->hour   = hour;
+    time->day    = day;
+    time->month  = month;
+    time->year   = year;
 }

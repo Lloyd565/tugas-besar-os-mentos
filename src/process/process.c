@@ -86,7 +86,12 @@ int32_t process_create_user_process(struct EXT2DriverRequest request) {
     paging_use_page_directory(new_pcb->context.page_directory_virtual_addr);
     
     // read and load the executable into the new process
-    read(request);
+    // read and load the executable into the new process
+    if (read(request) != 0) {
+         paging_use_page_directory(old_page_directory);
+         retcode = PROCESS_CREATE_FAIL_FS_READ_FAILURE;
+         goto exit_cleanup;
+    }
     // restore the old page directory
     paging_use_page_directory(old_page_directory);
     
@@ -116,4 +121,17 @@ int32_t process_create_user_process(struct EXT2DriverRequest request) {
 
 exit_cleanup:
     return retcode;
+
+
+}
+bool process_destroy(uint32_t pid){
+    for (int i = 0; i < PROCESS_COUNT_MAX; i++){
+        if (_process_list[i].metadata.pid == pid){
+            memset(&_process_list[i], 0, sizeof(struct ProcessControlBlock));
+            _process_list[i].metadata.state = DESTROYED;
+            process_manager_state.active_process_count--;
+            return true;
+        }
+    }
+    return false;
 }

@@ -96,6 +96,7 @@ typedef enum PROCESS_STATE {
     READY,
     RUNNING,
     BLOCKED,
+    DESTROYED
 } PROCESS_STATE;
 
 /**

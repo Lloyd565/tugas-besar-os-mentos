@@ -6,7 +6,12 @@
 #include "header/text/framebuffer.h"
 #include "header/stdlib/string.h"
 #include "header/scheduler/scheduler.h"
+#include "header/scheduler/scheduler.h"
 #include "header/process/process.h"
+#include "../cmos.h"
+
+extern struct ProcessControlBlock _process_list[PROCESS_COUNT_MAX];
+
 struct TSSEntry _interrupt_tss_entry = {
     .ss0  = GDT_KERNEL_DATA_SEGMENT_SELECTOR,
 };
@@ -187,6 +192,110 @@ void syscall(struct InterruptFrame frame) {
             clear_screen();
             break;
         }
+        case 11 : //kill process
+        {
+            int32_t pid = *(int32_t*)frame.cpu.general.ebx;
+            
+            struct ProcessControlBlock *curr = process_get_current_running_pcb_pointer();
+            bool is_self = (curr != NULL && (int32_t)curr->metadata.pid == pid);
+            
+            if (process_destroy(pid)) {
+                *(int8_t*)frame.cpu.general.ecx = 0; // Success
+                if (is_self) {
+                    scheduler_switch_to_next_process();
+                }
+            } else {
+                 *(int8_t*)frame.cpu.general.ecx = -1; // Failed
+            }
+            break;
+        }
+        case 12: // exec
+        {
+            struct EXT2DriverRequest *req = (struct EXT2DriverRequest*) frame.cpu.general.ebx;
+            int8_t *ret = (int8_t*) frame.cpu.general.ecx;
+            
+            // 1. Resolve Inode to determine file size
+            uint32_t inode = 0;
+            if (get_inode(*req, &inode) != 0) {
+                framebuffer_write_string(0, 0, "Exec: Inode not found", 0xC, 0x0);
+                *ret = PROCESS_CREATE_FAIL_FS_READ_FAILURE;
+                break;
+            }
+            
+            struct EXT2Inode inode_data;
+            read_inode(inode, &inode_data);
+            
+            // Check if it is a file
+            if (inode_data.i_mode & EXT2_S_IFDIR) {
+                framebuffer_write_string(0, 0, "Exec: Is directory", 0xC, 0x0);
+                *ret = 1; // Attempting to exec a directory
+                break;
+            }
+
+            // 2. Set buffer_size for reading
+            req->buffer_size = inode_data.i_size;
+            
+            // 3. Create process
+            *ret = process_create_user_process(*req);
+            if (*ret != 0) {
+                 char buf[2] = {*ret + '0', '\0'};
+                 framebuffer_write_string(0, 50, "Exec: Create fail code:", 0xC, 0x0);
+                 framebuffer_write_string(0, 75, buf, 0xC, 0x0);
+            }
+            break;
+        }
+        case 13: // ps
+        {
+            uint32_t index = (uint32_t) frame.cpu.general.ebx;
+            void *output_buffer = (void*) frame.cpu.general.ecx;
+            
+            if (index < PROCESS_COUNT_MAX) {
+                // Only copy the metadata part (pid, state, name, is_active)
+                memcpy(output_buffer, &(_process_list[index].metadata), sizeof(_process_list[index].metadata));
+            } else {
+                // If index invalid, we can't safely zero the user buffer easily without knowing size, 
+                // but for this specific syscall structure, we expect user to loop correctly.
+                // Or we can zero out the sizeof metadata.
+                memset(output_buffer, 0, sizeof(_process_list[index].metadata)); 
+            }
+            break;
+        }
+        case 14: // get_time
+        {
+            struct Time *time_ptr = (struct Time*) frame.cpu.general.ebx;
+            cmos_get_time(time_ptr);
+            break;
+        }
+        case 15: // puts at (puts_at)
+        {
+            char *str = (char*) frame.cpu.general.ebx;
+            // uint32_t len = (uint32_t) frame.cpu.general.ecx;
+            // uint32_t color = (uint32_t) frame.cpu.general.edx; // Using edx for color
+            // Need row and col. We can pack them or use stack/struct. 
+            // Let's assume eax, ebx, ecx, edx are used. 
+            // We need 5 args: str, len, color, row, col.
+            // Let's pack row/col into esi or just use struct?
+            // User shell follows linux syscall convention (registers).
+            // Let's use: ebx=str, ecx=len, edx=color | row << 8 | col
+            // edx is 32 bit. 0x00RRGGBB? No.
+            // Let's do: ebx=str, ecx=len, edx=color (8 bit), esi=row, edi=col?
+            // interrupt frame might not capture esi/edi easily if not in general struct.
+            // Frame struct has cpu.general which likely has esi/edi.
+            // Check InterruptFrame definition? It usually has pushe-d general regs.
+            // Assuming we only have eax, ebx, ecx, edx available easily in the switch?
+            // Let's look at `syscall(6, ...)` which was `puts`.
+            // case 6: puts(ebx, ecx, edx).
+            // Let's modify frame.cpu.general.edx to hold color (low 8), row (next 8), col (next 8).
+            // edx = color | (row << 8) | (col << 16).
+            
+            uint32_t combined = frame.cpu.general.edx;
+            uint8_t c = combined & 0xFF;
+            uint8_t r = (combined >> 8) & 0xFF;
+            uint8_t co = (combined >> 16) & 0xFF;
+            
+            framebuffer_write_string(r, co, str, c, 0); // Background 0 implied? Or pass it?
+            break;
+        }
     }
 }
 
@@ -206,8 +315,11 @@ void activate_timer_interrupt(void) {
 void timer_isr(struct InterruptFrame frame){
     // get context to save
     struct ProcessControlBlock *curr_pcb = process_get_current_running_pcb_pointer();
-    // cek curr_pcb lagi running, dan cek kalau frame lagi user mode atau ngga ((frame.int_stack.cs & 0x3) == 0x3) = ngecek user mode)
-    if (curr_pcb->metadata.state == RUNNING && (frame.int_stack.cs & 0x3) == 0x3){
+    
+    if (curr_pcb == NULL) {
+        // No running process (maybe destroyed), switch immediately
+        scheduler_switch_to_next_process();
+    } else if (curr_pcb->metadata.state == RUNNING && (frame.int_stack.cs & 0x3) == 0x3){
         struct Context ctx = {
             .cpu = frame.cpu,
             // .cpu.stack.esp = frame.cpu.stack.esp,
