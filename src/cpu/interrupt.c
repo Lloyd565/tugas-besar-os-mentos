@@ -1,11 +1,12 @@
 #include "header/cpu/interrupt/interrupt.h"
 #include "header/cpu/portio.h"
 #include "header/driver/keyboard.h"
+#include "header/driver/mouse.h"
+#include "header/driver/speaker.h"
 #include "header/cpu/gdt.h"
 #include "header/filesystem/ext2.h"
 #include "header/text/framebuffer.h"
 #include "header/stdlib/string.h"
-#include "header/scheduler/scheduler.h"
 #include "header/scheduler/scheduler.h"
 #include "header/process/process.h"
 #include "../cmos.h"
@@ -65,6 +66,9 @@ void main_interrupt_handler(struct InterruptFrame frame) {
             pic_ack(IRQ_KEYBOARD);
             keyboard_isr();
             break;
+        case PIC2_OFFSET + IRQ_MOUSE:
+            mouse_isr();
+            break;
         case 0x30:
             syscall(frame);
             break;
@@ -91,6 +95,9 @@ void update_tss_kernel_stack(void) {
     _interrupt_tss_entry.esp0 = stack_ptr + 8;
 }
 
+void activate_mouse_interrupt(void) {
+    out(PIC2_DATA, in(PIC2_DATA) & ~(1 << IRQ_MOUSE));
+}
 
 void set_tss_kernel_current_stack(void) {
     uint32_t stack_ptr;
@@ -101,7 +108,6 @@ void set_tss_kernel_current_stack(void) {
 }
 
 void syscall(struct InterruptFrame frame) {
-    // puts("SYSCALL CALLED\n", 0xE, 0xF, 0x0); //DEBUGGGGGGGGGGGGGG
     switch (frame.cpu.general.eax) {
         case 0:
             *((int8_t*) frame.cpu.general.ecx) = read(
@@ -135,9 +141,30 @@ void syscall(struct InterruptFrame frame) {
                 *(struct EXT2DriverRequest*) frame.cpu.general.ebx
             );
             break;
-        case 4: { // getchar - NON-BLOCKING version
-            *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
-            if (keyboard_state.keyboard_buffer != '\0') {
+        case 4: { // getchar - with mouse polling capability and Ctrl+C support
+            // Non-blocking getchar with small timeout to allow mouse updates
+            uint32_t timeout = 50000;  // Small timeout iterations
+            
+            while (keyboard_state.keyboard_buffer == '\0' && !keyboard_state.ctrl_c_pressed && timeout > 0) {
+                // Enable interrupts and wait a tiny bit
+                __asm__ volatile("sti");
+                for (volatile uint32_t i = 0; i < 1000; i++);  // Small delay
+                __asm__ volatile("cli");
+                timeout--;
+            }
+            
+            // If still no input, do a full HLT wait
+            while (keyboard_state.keyboard_buffer == '\0' && !keyboard_state.ctrl_c_pressed) {
+                __asm__ volatile("sti; hlt");
+            }
+            
+            // Check apakah Ctrl+C yang ditekan
+            if (keyboard_state.ctrl_c_pressed) {
+                keyboard_state.ctrl_c_pressed = false;
+                *((char*)frame.cpu.general.ebx) = 0x03;  // Return Ctrl+C character (ASCII 3)
+            } else {
+                // Ambil karakter
+                *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
                 keyboard_state.keyboard_buffer = '\0';
             }
             break;
@@ -187,7 +214,89 @@ void syscall(struct InterruptFrame frame) {
             clear_screen();
             break;
         }
-        case 11 : //kill process
+        
+        // ============ SPEAKER & MOUSE SYSCALLS (11-20) ============
+        case 11: // speaker_beep syscall
+        {
+            uint16_t frequency = (uint16_t) frame.cpu.general.ebx;
+            uint32_t duration = frame.cpu.general.ecx;
+            speaker_beep(frequency, duration);
+            break;
+        }
+        case 12: // is_ctrl_c_pressed syscall
+        {
+            bool result = is_ctrl_c_pressed();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 13: // mouse_init syscall
+        {
+            mouse_init();
+            activate_mouse_interrupt();
+            break;
+        }
+        case 14: // mouse_get_state syscall
+        {
+            uint32_t *x = (uint32_t*)frame.cpu.general.ebx;
+            uint32_t *y = (uint32_t*)frame.cpu.general.ecx;
+            uint8_t *buttons = (uint8_t*)frame.cpu.general.edx;
+            *buttons = mouse_get_state(x, y);
+            break;
+        }
+        case 15: // mouse_get_click syscall
+        {
+            bool result = mouse_get_click();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 16: // render_mouse_pointer syscall - draw mouse blocking text
+        {
+            uint32_t x = frame.cpu.general.ebx;
+            uint32_t y = frame.cpu.general.ecx;
+            uint8_t color = (uint8_t)frame.cpu.general.edx;
+            
+            // Convert pixel coordinates to character grid (80x24)
+            uint8_t col = x / 8;  // Assuming 8 pixels per character width
+            uint8_t row = y / 8;  // Assuming 8 pixels per character height
+            
+            if (col < 80 && row < 24) {
+                framebuffer_write(row, col, '*', color, 0x00);
+            }
+            break;
+        }
+        case 17: // is_ctrl_pressed syscall
+        {
+            bool result = is_ctrl_pressed();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 18: // is_shift_pressed syscall
+        {
+            bool result = is_shift_pressed();
+            *((bool*)frame.cpu.general.ebx) = result;
+            break;
+        }
+        case 19: // get_mouse_drag_state syscall
+        {
+            bool *drag_active_ptr = (bool*)frame.cpu.general.ebx;
+            uint32_t *coords = (uint32_t*)frame.cpu.general.ecx; // Array: [start_x, start_y, end_x, end_y]
+            
+            *drag_active_ptr = mouse_state.drag_active;
+            if (coords) {
+                coords[0] = mouse_state.drag_start_x;
+                coords[1] = mouse_state.drag_start_y;
+                coords[2] = mouse_state.drag_end_x;
+                coords[3] = mouse_state.drag_end_y;
+            }
+            break;
+        }
+        case 20: // render_selection syscall - placeholder
+        {
+            break;
+        }
+        
+        // ============ PROCESS MANAGEMENT SYSCALLS (21-25) ============
+        case 21: // kill process
         {
             int32_t pid = *(int32_t*)frame.cpu.general.ebx;
             
@@ -204,7 +313,7 @@ void syscall(struct InterruptFrame frame) {
             }
             break;
         }
-        case 12: // exec
+        case 22: // exec
         {
             struct EXT2DriverRequest *req = (struct EXT2DriverRequest*) frame.cpu.general.ebx;
             int8_t *ret = (int8_t*) frame.cpu.general.ecx;
@@ -239,56 +348,33 @@ void syscall(struct InterruptFrame frame) {
             }
             break;
         }
-        case 13: // ps
+        case 23: // ps - get process info
         {
             uint32_t index = (uint32_t) frame.cpu.general.ebx;
             void *output_buffer = (void*) frame.cpu.general.ecx;
             
             if (index < PROCESS_COUNT_MAX) {
-                // Only copy the metadata part (pid, state, name, is_active)
                 memcpy(output_buffer, &(_process_list[index].metadata), sizeof(_process_list[index].metadata));
             } else {
-                // If index invalid, we can't safely zero the user buffer easily without knowing size, 
-                // but for this specific syscall structure, we expect user to loop correctly.
-                // Or we can zero out the sizeof metadata.
                 memset(output_buffer, 0, sizeof(_process_list[index].metadata)); 
             }
             break;
         }
-        case 14: // get_time
+        case 24: // get_time
         {
             struct Time *time_ptr = (struct Time*) frame.cpu.general.ebx;
             cmos_get_time(time_ptr);
             break;
         }
-        case 15: // puts at (puts_at)
+        case 25: // puts_at - write string at specific position
         {
             char *str = (char*) frame.cpu.general.ebx;
-            // uint32_t len = (uint32_t) frame.cpu.general.ecx;
-            // uint32_t color = (uint32_t) frame.cpu.general.edx; // Using edx for color
-            // Need row and col. We can pack them or use stack/struct. 
-            // Let's assume eax, ebx, ecx, edx are used. 
-            // We need 5 args: str, len, color, row, col.
-            // Let's pack row/col into esi or just use struct?
-            // User shell follows linux syscall convention (registers).
-            // Let's use: ebx=str, ecx=len, edx=color | row << 8 | col
-            // edx is 32 bit. 0x00RRGGBB? No.
-            // Let's do: ebx=str, ecx=len, edx=color (8 bit), esi=row, edi=col?
-            // interrupt frame might not capture esi/edi easily if not in general struct.
-            // Frame struct has cpu.general which likely has esi/edi.
-            // Check InterruptFrame definition? It usually has pushe-d general regs.
-            // Assuming we only have eax, ebx, ecx, edx available easily in the switch?
-            // Let's look at `syscall(6, ...)` which was `puts`.
-            // case 6: puts(ebx, ecx, edx).
-            // Let's modify frame.cpu.general.edx to hold color (low 8), row (next 8), col (next 8).
-            // edx = color | (row << 8) | (col << 16).
-            
             uint32_t combined = frame.cpu.general.edx;
             uint8_t c = combined & 0xFF;
             uint8_t r = (combined >> 8) & 0xFF;
             uint8_t co = (combined >> 16) & 0xFF;
             
-            framebuffer_write_string(r, co, str, c, 0); // Background 0 implied? Or pass it?
+            framebuffer_write_string(r, co, str, c, 0);
             break;
         }
     }
@@ -304,32 +390,24 @@ void activate_timer_interrupt(void) {
 
     // Activate the interrupt
     out(PIC1_DATA, in(PIC1_DATA) & ~(1 << IRQ_TIMER));
-    
 }
 
-void timer_isr(struct InterruptFrame frame){
+void timer_isr(struct InterruptFrame frame) {
     // get context to save
     struct ProcessControlBlock *curr_pcb = process_get_current_running_pcb_pointer();
     
     if (curr_pcb == NULL) {
         // No running process (maybe destroyed), switch immediately
         scheduler_switch_to_next_process();
-    } else if (curr_pcb->metadata.state == RUNNING && (frame.int_stack.cs & 0x3) == 0x3){
+    } else if (curr_pcb->metadata.state == RUNNING && (frame.int_stack.cs & 0x3) == 0x3) {
         struct Context ctx = {
             .cpu = frame.cpu,
-            // .cpu.stack.esp = frame.cpu.stack.esp,
             .eip = frame.int_stack.eip,
             .eflags = frame.int_stack.eflags,
-            .esp = frame.cpu.stack.esp,//*((uint32_t*) &frame.int_stack + 4),
+            .esp = frame.cpu.stack.esp,
             .page_directory_virtual_addr = paging_get_current_page_directory_addr()
         };
-        // framebuffer_write_string(5, 0, "context saved", 0, 0);
-        //save context, schedule for next process
-        // __asm__ volatile("cli");
         scheduler_save_context_to_current_running_pcb(ctx);
         scheduler_switch_to_next_process();
-    // framebuffer_write_string(6, 0, "scheduled next process", 0, 0);
     }
 }
-
-
