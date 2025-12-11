@@ -3,6 +3,7 @@
 #include "header/filesystem/ext2.h"  // EXT2 structures
 #include "header/stdlib/string.h"    // memset, memcmp
 #include "header/text/framebuffer.h"
+#include "header/driver/speaker.h"   // speaker_beep functions
 
 #define BLOCK_COUNT 16
 #define INPUT_BUFFER_SIZE 256
@@ -55,6 +56,10 @@ void syscall_get_resolved_path(struct EXT2DriverRequest *request, char *result_p
 
 void syscall_activate_keyboard() {
     syscall(7, 0, 0, 0);
+}
+
+void syscall_speaker_beep(uint16_t frequency, uint32_t duration) {
+    syscall(11, (uint32_t)frequency, duration, 0);
 }
 
 // Shell state
@@ -398,6 +403,104 @@ void cmd_echo (char *text) {
     print("\n", 0xF);
 }
 
+void cmd_beep() {
+    speaker_beep_simple(500);  // 1000Hz, 500ms
+}
+
+void cmd_speaker(char *freq_str, char *duration_str) {
+    if (!freq_str || !duration_str) {
+        print("speaker: missing arguments\n", 0xC);
+        return;
+    }
+    
+    // Simple parsing - convert string to uint32_t
+    uint32_t freq = 1000;  // default
+    uint32_t duration = 200;  // default
+    
+    // Parse frequency
+    if (freq_str[0] != '\0') {
+        freq = 0;
+        for (int i = 0; freq_str[i] >= '0' && freq_str[i] <= '9'; i++) {
+            freq = freq * 10 + (freq_str[i] - '0');
+        }
+    }
+    
+    // Parse duration
+    if (duration_str[0] != '\0') {
+        duration = 0;
+        for (int i = 0; duration_str[i] >= '0' && duration_str[i] <= '9'; i++) {
+            duration = duration * 10 + (duration_str[i] - '0');
+        }
+    }
+    
+    speaker_beep((uint16_t)freq, duration);
+}
+
+void cmd_play(char *filename) {
+    if (!filename || filename[0] == '\0') {
+        print("play: missing filename\n", 0xC);
+        return;
+    }
+    
+    struct BlockBuffer buf[BLOCK_COUNT];
+    struct EXT2DriverRequest request = {
+        .buf = buf,
+        .name = filename,
+        .name_len = strlen(filename),
+        .parent_inode = shell_state.current_dir_inode,
+        .buffer_size = BLOCK_SIZE * BLOCK_COUNT
+    };
+    
+    int8_t read_status = 0;
+    syscall_read(&request, &read_status);
+    
+    if (read_status != 0) {
+        print("play: file not found or cannot read\n", 0xC);
+        return;
+    }
+    
+    // Parse music file format: freq duration (space/newline separated)
+    char *content = (char *)buf;
+    uint32_t freq = 0;
+    uint32_t duration = 0;
+    int parsing_freq = 1;
+    
+    for (uint32_t i = 0; i < BLOCK_SIZE * BLOCK_COUNT && content[i] != '\0'; i++) {
+        char c = content[i];
+        
+        if (c >= '0' && c <= '9') {
+            if (parsing_freq) {
+                freq = freq * 10 + (c - '0');
+            } else {
+                duration = duration * 10 + (c - '0');
+            }
+        } else if (c == ' ' || c == '\t') {
+            if (freq > 0 && parsing_freq) {
+                parsing_freq = 0;
+            }
+        } else if (c == '\n' || c == '\r' || c == '#') {
+            // End of line or comment
+            if (freq > 0 && duration > 0) {
+                // Play the note
+                speaker_beep((uint16_t)freq, duration);
+            }
+            
+            // Skip rest of line if comment
+            if (c == '#') {
+                while (i < BLOCK_SIZE * BLOCK_COUNT && content[i] != '\n' && content[i] != '\r') {
+                    i++;
+                }
+            }
+            
+            freq = 0;
+            duration = 0;
+            parsing_freq = 1;
+        }
+    }
+    
+    print("play: done\n", 0xA);
+}
+
 void cmd_touch(char *filename) {
     if (filename[0] == '\0') {
         print("touch: missing operand\n", 0xC);
@@ -598,7 +701,9 @@ void cmd_find(char *target) {
 
 // Execute command
 void execute_command(struct Command *cmd) {
-    if (cmd->cmd[0] == '\0') return;
+    if (cmd->cmd[0] == '\0') {
+        return;  // Empty command, silent return
+    }
     
     if (strcmp(cmd->cmd, "ls") == 0) {
         cmd_ls();
@@ -628,6 +733,12 @@ void execute_command(struct Command *cmd) {
     } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
         syscall(10,0,0,0);
+    } else if (strcmp(cmd->cmd, "beep") == 0) {
+        cmd_beep();
+    } else if (strcmp(cmd->cmd, "speaker") == 0) {
+        cmd_speaker(cmd->args[0], cmd->args[1]);
+    } else if (strcmp(cmd->cmd, "play") == 0) {
+        cmd_play(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "help") == 0) {
         print_or_pipe("Available commands:\n", 0xE);
         print_or_pipe("  ls       - list directory\n", 0xF);
@@ -643,6 +754,9 @@ void execute_command(struct Command *cmd) {
         print_or_pipe("  grep     - search pattern in file\n", 0xF);
         print_or_pipe("  find     - search for files\n", 0xF);
         print_or_pipe("  clear    - clear screen\n", 0xF);
+        print_or_pipe("  beep     - simple beep (1000Hz, 500ms)\n", 0xF);
+        print_or_pipe("  speaker  - beep with custom frequency/duration\n", 0xF);
+        print_or_pipe("  play     - play music file (freq duration format)\n", 0xF);
         print_or_pipe("  help     - show this help\n", 0xF);
     } else {
         print(cmd->cmd, 0xC);
@@ -681,12 +795,12 @@ int main(void) {
     strcpy(shell_state.current_path, "/");
     
     char input_buffer[INPUT_BUFFER_SIZE];
+    char path[512];  // MOVED OUTSIDE LOOP
     struct Command cmd;
 
     syscall_activate_keyboard();
 
     while (true) {
-        char path[512];
         char *user = "root";
         char *at = "@";
         char *host = "MentOS2130";

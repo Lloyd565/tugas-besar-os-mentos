@@ -1,6 +1,7 @@
 #include "header/cpu/interrupt/interrupt.h"
 #include "header/cpu/portio.h"
 #include "header/driver/keyboard.h"
+#include "header/driver/speaker.h"
 #include "header/cpu/gdt.h"
 #include "header/filesystem/ext2.h"
 #include "header/text/framebuffer.h"
@@ -162,6 +163,13 @@ void syscall(struct InterruptFrame frame) {
         case 10:
         {
             clear_screen();
+            break;
+        }
+        case 11: // speaker_beep syscall
+        {
+            uint16_t frequency = (uint16_t) frame.cpu.general.ebx;
+            uint32_t duration = frame.cpu.general.ecx;
+            speaker_beep(frequency, duration);
             break;
         }
     }
