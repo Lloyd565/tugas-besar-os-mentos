@@ -24,12 +24,12 @@ void syscall(uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx) {
 }
 
 void syscall_get_time(struct Time *t) {
-    syscall(14, (uint32_t)t, 0, 0);
+    syscall(24, (uint32_t)t, 0, 0);  // Syscall 24 = get_time
 }
 
 void syscall_puts_at(char *str, uint32_t len, uint8_t color, uint8_t row, uint8_t col) {
     uint32_t combined = color | (row << 8) | (col << 16);
-    syscall(15, (uint32_t)str, len, combined);
+    syscall(25, (uint32_t)str, len, combined);  // Syscall 25 = puts_at
 }
 
 void int_to_str(int n, char *buf) {

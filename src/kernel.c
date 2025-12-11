@@ -70,6 +70,7 @@ void kernel_setup(void) {
         // Create init process and start scheduler
         process_create_user_process(request);
         scheduler_init();
+        activate_timer_interrupt();  // Enable timer for process switching
         scheduler_switch_to_next_process();
     } else {
         // Error handling

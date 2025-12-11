@@ -205,21 +205,19 @@ void syscall_activate_keyboard() {
     syscall(7, 0, 0, 0);
 }
 
-void syscall_kill(int32_t pid, int8_t *retcode) {
-    syscall(11, (uint32_t)&pid, (uint32_t)retcode, 0);
+// Speaker syscall (11)
+void syscall_speaker_beep(uint16_t frequency, uint32_t duration) {
+    syscall(11, (uint32_t)frequency, duration, 0);
 }
 
-void syscall_exec(struct EXT2DriverRequest *request, int8_t *retcode) {
-    syscall(12, (uint32_t)request, (uint32_t)retcode, 0);
+// Check Ctrl+C (12)
+bool syscall_is_ctrl_c_pressed(void) {
+    bool result = false;
+    syscall(12, (uint32_t)&result, 0, 0);
+    return result;
 }
 
-void syscall_get_process_info(uint32_t index, struct ProcessInfo *pcb) {
-    syscall(13, index, (uint32_t)pcb, 0);
-}
-
-void syscall_puts_at(char *str, uint32_t len, uint8_t color, uint8_t row, uint8_t col) {
-    uint32_t combined = color | (row << 8) | (col << 16);
-    syscall(15, (uint32_t)str, len, combined);
+// Mouse syscalls (13-19)
 void syscall_mouse_init(void) {
     syscall(13, 0, 0, 0);
 }
@@ -250,22 +248,34 @@ bool syscall_is_shift_pressed(void) {
     return result;
 }
 
-// Get mouse drag state
 bool syscall_get_mouse_drag_state(uint32_t *coords) {
-    // coords is array: [start_x, start_y, end_x, end_y]
     bool drag_active = false;
     syscall(19, (uint32_t)&drag_active, (uint32_t)coords, 0);
     return drag_active;
 }
 
-void syscall_speaker_beep(uint16_t frequency, uint32_t duration) {
-    syscall(11, (uint32_t)frequency, duration, 0);
+
+// Process management syscalls (21-25)
+void syscall_kill(int32_t pid, int8_t *retcode) {
+    syscall(21, (uint32_t)&pid, (uint32_t)retcode, 0);
 }
 
-bool syscall_is_ctrl_c_pressed(void) {
-    bool result = false;
-    syscall(12, (uint32_t)&result, 0, 0);
-    return result;
+void syscall_exec(struct EXT2DriverRequest *request, int8_t *retcode) {
+    syscall(22, (uint32_t)request, (uint32_t)retcode, 0);
+}
+
+void syscall_get_process_info(uint32_t index, struct ProcessInfo *pcb) {
+    syscall(23, index, (uint32_t)pcb, 0);
+}
+
+void syscall_get_time(void *time_ptr) {
+    syscall(24, (uint32_t)time_ptr, 0, 0);
+}
+
+void syscall_puts_at(char *str, uint32_t len, uint8_t color, uint8_t row, uint8_t col) {
+    (void)len; // unused
+    uint32_t combined = color | (row << 8) | (col << 16);
+    syscall(25, (uint32_t)str, 0, combined);
 }
 
 // Shell state
