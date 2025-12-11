@@ -1342,18 +1342,12 @@ int main(void) {
         
         read_line(input_buffer, INPUT_BUFFER_SIZE);
         
-        // Check if Ctrl+C was pressed (empty buffer)
+        // Check if Ctrl+C was pressed (empty buffer) - from mouse branch
         if (input_buffer[0] == '\0') {
             continue;  // Skip command execution and show prompt again
         }
         
-        parse_input(input_buffer, &cmd);
-        execute_command(&cmd);
-        
-        // Update mouse selection after command output is printed
-        // This allows user to select text that was just printed
-        update_mouse_selection();
-        // check pipe
+        // Check for pipe - from milestone-3-new branch
         char *pipe_pos = (char *)0;
         for (uint32_t i = 0; input_buffer[i] != '\0'; i++) {
             if (input_buffer[i] == '|') {
@@ -1387,6 +1381,10 @@ int main(void) {
             parse_input(input_buffer, &cmd);
             execute_command(&cmd);
         }
+        
+        // Update mouse selection after command output is printed - from mouse branch
+        // This allows user to select text that was just printed
+        update_mouse_selection();
     }
     
     return 0;
