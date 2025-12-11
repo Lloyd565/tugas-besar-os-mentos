@@ -109,5 +109,5 @@ insert-shell: inserter user-shell
 
 .PHONY: all
 
-all: clean disk user-shell insert-shell run
+all: clean disk insert-shell build run
 	@echo "=== SELESAI SEMUA TASK ==="
