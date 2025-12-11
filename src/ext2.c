@@ -782,13 +782,19 @@ uint32_t allocate_node(void)
  * @param i_block Array of block pointers from inode
  * @param file_size Size of file in bytes
  */
+/**
+ * Load all blocks from inode into buffer (supports indirect blocks)
+ * @param buf Destination buffer
+ * @param i_block Array of block pointers from inode
+ * @param file_size Size of file in bytes
+ */
 void load_inode_blocks(void *buf, uint32_t *i_block, uint32_t file_size)
 {
     uint32_t bytes_read = 0;
     uint32_t blocks_to_read = (file_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     struct BlockBuffer block_buff;
 
-    // Read direct blocks (0-11)
+    // ============ 1. Read direct blocks (0-11) ============
     for (uint32_t i = 0; i < DIRECT_BLOCKS && i < blocks_to_read; i++) {
         if (i_block[i] == 0) break;
 
@@ -803,7 +809,7 @@ void load_inode_blocks(void *buf, uint32_t *i_block, uint32_t file_size)
         bytes_read += bytes_to_copy;
     }
 
-    // Read single indirect block (i_block[12])
+    // ============ 2. Read single indirect block (i_block[12]) ============
     if (blocks_to_read > DIRECT_BLOCKS && i_block[12] != 0) {
         struct BlockBuffer indirect_buff;
         read_blocks(&indirect_buff, i_block[12], 1);
@@ -823,8 +829,45 @@ void load_inode_blocks(void *buf, uint32_t *i_block, uint32_t file_size)
             bytes_read += bytes_to_copy;
         }
     }
+
+    // ============ 3. Read doubly indirect block (i_block[13]) ============
+    uint32_t doubly_start = DIRECT_BLOCKS + PTRS_PER_BLOCK;
+    if (blocks_to_read > doubly_start && i_block[13] != 0) {
+        struct BlockBuffer level1_buff;
+        read_blocks(&level1_buff, i_block[13], 1);
+        uint32_t *first_level = (uint32_t *)level1_buff.buf;
+
+        for (uint32_t i = 0; i < PTRS_PER_BLOCK && (doubly_start + i * PTRS_PER_BLOCK) < blocks_to_read; i++) {
+            if (first_level[i] == 0) break;
+
+            struct BlockBuffer level2_buff;
+            read_blocks(&level2_buff, first_level[i], 1);
+            uint32_t *second_level = (uint32_t *)level2_buff.buf;
+
+            for (uint32_t j = 0; j < PTRS_PER_BLOCK && bytes_read < file_size; j++) {
+                if (second_level[j] == 0) break;
+
+                read_blocks(&block_buff, second_level[j], 1);
+
+                uint32_t bytes_to_copy = BLOCK_SIZE;
+                if (bytes_read + bytes_to_copy > file_size) {
+                    bytes_to_copy = file_size - bytes_read;
+                }
+
+                memcpy((uint8_t *)buf + bytes_read, block_buff.buf, bytes_to_copy);
+                bytes_read += bytes_to_copy;
+            }
+        }
+    }
 }
 
+/**
+ * Allocate blocks and write data from buffer (supports indirect blocks)
+ * @param buf Source buffer with data
+ * @param node Inode to update with block pointers
+ * @param buffer_size Size of data to write
+ * @return 0 on success, -1 on failure
+ */
 /**
  * Allocate blocks and write data from buffer (supports indirect blocks)
  * @param buf Source buffer with data
@@ -843,7 +886,7 @@ int8_t allocate_node_blocks(void *buf, struct EXT2Inode *node, uint32_t buffer_s
         node->i_block[i] = 0;
     }
 
-    // Allocate and write direct blocks (0-11)
+    // ============ 1. Allocate and write direct blocks (0-11) ============
     uint32_t direct_count = (blocks_needed < DIRECT_BLOCKS) ? blocks_needed : DIRECT_BLOCKS;
     for (uint32_t i = 0; i < direct_count; i++) {
         uint32_t block_num = allocate_block();
@@ -868,7 +911,7 @@ int8_t allocate_node_blocks(void *buf, struct EXT2Inode *node, uint32_t buffer_s
         bytes_written += bytes_to_write;
     }
 
-    // Allocate indirect blocks if needed
+    // ============ 2. Allocate single indirect blocks if needed ============
     if (blocks_needed > DIRECT_BLOCKS) {
         uint32_t indirect_block = allocate_block();
         if (indirect_block == 0) {
@@ -920,9 +963,110 @@ int8_t allocate_node_blocks(void *buf, struct EXT2Inode *node, uint32_t buffer_s
         write_blocks(&indirect_buff, indirect_block, 1);
     }
 
+    // ============ 3. Allocate doubly indirect blocks if needed ============
+    uint32_t doubly_start = DIRECT_BLOCKS + PTRS_PER_BLOCK;
+    if (blocks_needed > doubly_start) {
+        uint32_t doubly_block = allocate_block();
+        if (doubly_block == 0) {
+            // Cleanup previous allocations
+            if (node->i_block[12] != 0) {
+                struct BlockBuffer cleanup_buff;
+                read_blocks(&cleanup_buff, node->i_block[12], 1);
+                uint32_t *cleanup_ptrs = (uint32_t *)cleanup_buff.buf;
+                for (uint32_t i = 0; i < PTRS_PER_BLOCK; i++) {
+                    if (cleanup_ptrs[i] != 0) {
+                        set_block_used(cleanup_ptrs[i], false);
+                    }
+                }
+                set_block_used(node->i_block[12], false);
+            }
+            for (uint32_t j = 0; j < direct_count; j++) {
+                set_block_used(node->i_block[j], false);
+            }
+            return -1;
+        }
+        node->i_block[13] = doubly_block;
+
+        struct BlockBuffer first_level_buff;
+        memset(&first_level_buff, 0, sizeof(first_level_buff));
+        uint32_t *first_level = (uint32_t *)first_level_buff.buf;
+
+        uint32_t remaining_blocks = blocks_needed - doubly_start;
+        uint32_t first_level_count = (remaining_blocks + PTRS_PER_BLOCK - 1) / PTRS_PER_BLOCK;
+        if (first_level_count > PTRS_PER_BLOCK) {
+            first_level_count = PTRS_PER_BLOCK;
+        }
+
+        for (uint32_t i = 0; i < first_level_count; i++) {
+            uint32_t second_level_block = allocate_block();
+            if (second_level_block == 0) {
+                // Cleanup
+                for (uint32_t j = 0; j < i; j++) {
+                    if (first_level[j] != 0) {
+                        struct BlockBuffer cleanup_buff;
+                        read_blocks(&cleanup_buff, first_level[j], 1);
+                        uint32_t *cleanup_ptrs = (uint32_t *)cleanup_buff.buf;
+                        for (uint32_t k = 0; k < PTRS_PER_BLOCK; k++) {
+                            if (cleanup_ptrs[k] != 0) {
+                                set_block_used(cleanup_ptrs[k], false);
+                            }
+                        }
+                        set_block_used(first_level[j], false);
+                    }
+                }
+                set_block_used(doubly_block, false);
+                return -1;
+            }
+
+            first_level[i] = second_level_block;
+
+            struct BlockBuffer second_level_buff;
+            memset(&second_level_buff, 0, sizeof(second_level_buff));
+            uint32_t *second_level = (uint32_t *)second_level_buff.buf;
+
+            uint32_t blocks_in_this_group = remaining_blocks;
+            if (blocks_in_this_group > PTRS_PER_BLOCK) {
+                blocks_in_this_group = PTRS_PER_BLOCK;
+            }
+
+            for (uint32_t j = 0; j < blocks_in_this_group; j++) {
+                uint32_t block_num = allocate_block();
+                if (block_num == 0) {
+                    // Cleanup
+                    for (uint32_t k = 0; k < j; k++) {
+                        set_block_used(second_level[k], false);
+                    }
+                    set_block_used(second_level_block, false);
+                    return -1;
+                }
+
+                second_level[j] = block_num;
+
+                memset(&write_buff, 0, sizeof(write_buff));
+                uint32_t bytes_to_write = BLOCK_SIZE;
+                if (bytes_written + bytes_to_write > buffer_size) {
+                    bytes_to_write = buffer_size - bytes_written;
+                }
+
+                memcpy(write_buff.buf, (uint8_t *)buf + bytes_written, bytes_to_write);
+                write_blocks(&write_buff, block_num, 1);
+                bytes_written += bytes_to_write;
+            }
+
+            // Write second level block table
+            write_blocks(&second_level_buff, second_level_block, 1);
+            remaining_blocks -= blocks_in_this_group;
+        }
+
+        // Write first level block table
+        write_blocks(&first_level_buff, doubly_block, 1);
+    }
+
     node->i_blocks = blocks_needed * (BLOCK_SIZE / 512);
     return 0;
 }
+
+
 
 /* =================== DIRECTORY ENTRY OPERATIONS ============================*/
 struct EXT2DirectoryEntry *find_entry_in_dir(uint32_t dir_inode, char *name, uint8_t name_len)
@@ -1278,16 +1422,67 @@ int8_t delete(struct EXT2DriverRequest request)
         bgdt.table[0].bg_used_dirs_count--;
     }
 
-    // Free all blocks
-    for (uint32_t i = 0; i < 12; i++) {
+    // ============ PERBAIKAN: FREE ALL BLOCKS (SUPPORT INDIRECT) ============
+    
+    // 1. Free direct blocks (0-11)
+    for (uint32_t i = 0; i < EXT2_DIRECT_BLOCK_COUNT; i++) {
         if (target_node.i_block[i] != 0) {
             set_block_used(target_node.i_block[i], false);
         }
     }
 
+    // 2. Free single indirect block (i_block[12])
+    if (target_node.i_block[EXT2_INDIRECT_BLOCK] != 0) {
+        struct BlockBuffer indirect_buff;
+        read_blocks(&indirect_buff, target_node.i_block[EXT2_INDIRECT_BLOCK], 1);
+        uint32_t *indirect_ptrs = (uint32_t *)indirect_buff.buf;
+        
+        // Free all blocks pointed by indirect block
+        for (uint32_t i = 0; i < EXT2_BLOCK_PTR_PER_BLOCK; i++) {
+            if (indirect_ptrs[i] != 0) {
+                set_block_used(indirect_ptrs[i], false);
+            }
+        }
+        
+        // Free the indirect block itself
+        set_block_used(target_node.i_block[EXT2_INDIRECT_BLOCK], false);
+    }
+
+    // 3. Free doubly indirect block (i_block[13])
+    if (target_node.i_block[EXT2_DOUBLY_INDIRECT_BLOCK] != 0) {
+        struct BlockBuffer level1_buff;
+        read_blocks(&level1_buff, target_node.i_block[EXT2_DOUBLY_INDIRECT_BLOCK], 1);
+        uint32_t *first_level = (uint32_t *)level1_buff.buf;
+        
+        // Iterate through first level pointers
+        for (uint32_t i = 0; i < EXT2_BLOCK_PTR_PER_BLOCK; i++) {
+            if (first_level[i] == 0) break;
+            
+            // Read second level block
+            struct BlockBuffer level2_buff;
+            read_blocks(&level2_buff, first_level[i], 1);
+            uint32_t *second_level = (uint32_t *)level2_buff.buf;
+            
+            // Free all data blocks in second level
+            for (uint32_t j = 0; j < EXT2_BLOCK_PTR_PER_BLOCK; j++) {
+                if (second_level[j] != 0) {
+                    set_block_used(second_level[j], false);
+                }
+            }
+            
+            // Free the second level block itself
+            set_block_used(first_level[i], false);
+        }
+        
+        // Free the first level (doubly indirect) block itself
+        set_block_used(target_node.i_block[EXT2_DOUBLY_INDIRECT_BLOCK], false);
+    }
+
     // Free the inode
     set_inode_used(target_entry->inode, false);
 
+    // ============ SISANYA SAMA (Remove entry dari directory) ============
+    
     // Remove entry from directory
     if (prev_entry != (struct EXT2DirectoryEntry *)0) {
         // Not the first entry - merge with previous

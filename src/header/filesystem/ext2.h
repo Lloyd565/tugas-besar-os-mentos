@@ -8,7 +8,7 @@
 #include "../stdlib/stdtype.h"
 
 
-/* -- IF2130 File System constants -- */
+/* --  File System constants -- */
 #define BOOT_SECTOR 0                         // legacy from FAT32 filesystem IF2130 OS
 #define DISK_SPACE 4194304u                   // 4MB disk space (because our disk or storage.bin is 4MB)
 #define EXT2_SUPER_MAGIC 0xEF53               // this indicating that the filesystem used by OS is ext2
@@ -19,6 +19,13 @@
 #define INODES_TABLE_BLOCK_COUNT 16u
 #define INODES_PER_GROUP (INODES_PER_TABLE * INODES_TABLE_BLOCK_COUNT)            // number of inodes per group
 
+/* -- To Help with double Inderect Block -- */
+#define EXT2_DIRECT_BLOCK_COUNT 12
+#define EXT2_INDIRECT_BLOCK EXT2_DIRECT_BLOCK_COUNT // 12
+#define EXT2_DOUBLY_INDIRECT_BLOCK (EXT2_DIRECT_BLOCK_COUNT + 1) // 13
+#define EXT2_BLOCK_PTR_PER_BLOCK (BLOCK_SIZE / sizeof(uint32_t)) // 128
+#define EXT2_INDIRECT_CAPACITY EXT2_BLOCK_PTR_PER_BLOCK // 128
+#define EXT2_DOUBLY_INDIRECT_CAPACITY (EXT2_BLOCK_PTR_PER_BLOCK * EXT2_BLOCK_PTR_PER_BLOCK) // 16384
 
 /**
  * inodes constant 
