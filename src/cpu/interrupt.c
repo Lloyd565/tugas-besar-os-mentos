@@ -5,7 +5,8 @@
 #include "header/filesystem/ext2.h"
 #include "header/text/framebuffer.h"
 #include "header/stdlib/string.h"
-
+#include "header/scheduler/scheduler.h"
+#include "header/process/process.h"
 struct TSSEntry _interrupt_tss_entry = {
     .ss0  = GDT_KERNEL_DATA_SEGMENT_SELECTOR,
 };
@@ -47,10 +48,16 @@ void pic_remap(void) {
 
 void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
+        case PIC1_OFFSET + IRQ_TIMER:
+            pic_ack(IRQ_TIMER);
+            timer_isr(frame);
+            // scheduler_switch_to_next_process();
+            break;
         case 14:
             __asm__("hlt");
             break;
         case PIC1_OFFSET + IRQ_KEYBOARD:
+            pic_ack(IRQ_KEYBOARD);
             keyboard_isr();
             break;
         case 0x30:
@@ -61,6 +68,22 @@ void main_interrupt_handler(struct InterruptFrame frame) {
 
 void activate_keyboard_interrupt(void) {
     out(PIC1_DATA, in(PIC1_DATA) & ~(1 << IRQ_KEYBOARD));
+}
+
+/**
+ * FIX for Issue #3: Update TSS.esp0 based on current kernel stack
+ * This must be called to update the kernel stack pointer in TSS
+ * for proper interrupt handling on privilege level transitions.
+ * 
+ * This is called during context switches to ensure TSS points to
+ * the correct kernel stack for the next interrupt.
+ */
+void update_tss_kernel_stack(void) {
+    uint32_t stack_ptr;
+    // Reading base stack frame - current ESP at entry of this function
+    __asm__ volatile ("mov %%ebp, %0": "=r"(stack_ptr) : /* <Empty> */);
+    // Add 8 because 4 for ret address and other 4 is for stack_ptr variable
+    _interrupt_tss_entry.esp0 = stack_ptr + 8;
 }
 
 
@@ -168,3 +191,40 @@ void syscall(struct InterruptFrame frame) {
         }
     }
 }
+
+void activate_timer_interrupt(void) {
+    __asm__ volatile("cli");
+    // Setup how often PIT fire
+    uint32_t pit_timer_counter_to_fire = PIT_TIMER_COUNTER;
+    out(PIT_COMMAND_REGISTER_PIO, PIT_COMMAND_VALUE);
+    out(PIT_CHANNEL_0_DATA_PIO, (uint8_t) (pit_timer_counter_to_fire & 0xFF));
+    out(PIT_CHANNEL_0_DATA_PIO, (uint8_t) ((pit_timer_counter_to_fire >> 8) & 0xFF));
+
+    // Activate the interrupt
+    out(PIC1_DATA, in(PIC1_DATA) & ~(1 << IRQ_TIMER));
+    
+}
+
+void timer_isr(struct InterruptFrame frame){
+    // get context to save
+    struct ProcessControlBlock *curr_pcb = process_get_current_running_pcb_pointer();
+    // cek curr_pcb lagi running, dan cek kalau frame lagi user mode atau ngga ((frame.int_stack.cs & 0x3) == 0x3) = ngecek user mode)
+    if (curr_pcb->metadata.state == RUNNING && (frame.int_stack.cs & 0x3) == 0x3){
+        struct Context ctx = {
+            .cpu = frame.cpu,
+            // .cpu.stack.esp = frame.cpu.stack.esp,
+            .eip = frame.int_stack.eip,
+            .eflags = frame.int_stack.eflags,
+            .esp = frame.cpu.stack.esp,//*((uint32_t*) &frame.int_stack + 4),
+            .page_directory_virtual_addr = paging_get_current_page_directory_addr()
+        };
+        // framebuffer_write_string(5, 0, "context saved", 0, 0);
+        //save context, schedule for next process
+        // __asm__ volatile("cli");
+        scheduler_save_context_to_current_running_pcb(ctx);
+        scheduler_switch_to_next_process();
+    // framebuffer_write_string(6, 0, "scheduled next process", 0, 0);
+    }
+}
+
+
