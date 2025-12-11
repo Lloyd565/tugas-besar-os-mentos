@@ -141,30 +141,9 @@ void syscall(struct InterruptFrame frame) {
                 *(struct EXT2DriverRequest*) frame.cpu.general.ebx
             );
             break;
-        case 4: { // getchar - with mouse polling capability and Ctrl+C support
-            // Non-blocking getchar with small timeout to allow mouse updates
-            uint32_t timeout = 50000;  // Small timeout iterations
-            
-            while (keyboard_state.keyboard_buffer == '\0' && !keyboard_state.ctrl_c_pressed && timeout > 0) {
-                // Enable interrupts and wait a tiny bit
-                __asm__ volatile("sti");
-                for (volatile uint32_t i = 0; i < 1000; i++);  // Small delay
-                __asm__ volatile("cli");
-                timeout--;
-            }
-            
-            // If still no input, do a full HLT wait
-            while (keyboard_state.keyboard_buffer == '\0' && !keyboard_state.ctrl_c_pressed) {
-                __asm__ volatile("sti; hlt");
-            }
-            
-            // Check apakah Ctrl+C yang ditekan
-            if (keyboard_state.ctrl_c_pressed) {
-                keyboard_state.ctrl_c_pressed = false;
-                *((char*)frame.cpu.general.ebx) = 0x03;  // Return Ctrl+C character (ASCII 3)
-            } else {
-                // Ambil karakter
-                *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
+        case 4: { // getchar - NON-BLOCKING version
+            *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
+            if (keyboard_state.keyboard_buffer != '\0') {
                 keyboard_state.keyboard_buffer = '\0';
             }
             break;
