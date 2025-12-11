@@ -641,9 +641,10 @@ void cmd_play(char *filename) {
     uint32_t freq = 0;
     uint32_t duration = 0;
     int parsing_freq = 1;
+    bool should_stop = false;
     
-    for (uint32_t i = 0; i < BLOCK_SIZE * BLOCK_COUNT && content[i] != '\0'; i++) {
-        // Check for Ctrl+C
+    for (uint32_t i = 0; i < BLOCK_SIZE * BLOCK_COUNT && content[i] != '\0' && !should_stop; i++) {
+        // Check for Ctrl+C at the beginning of each iteration
         if (syscall_is_ctrl_c_pressed()) {
             print("\nplay: interrupted\n", 0xE);
             return;
@@ -666,6 +667,13 @@ void cmd_play(char *filename) {
             if (freq > 0 && duration > 0) {
                 // Play the note
                 speaker_beep((uint16_t)freq, duration);
+                
+                // After beep finishes, check if Ctrl+C was pressed during playback
+                // This allows stopping immediately after current note finishes
+                if (syscall_is_ctrl_c_pressed()) {
+                    print("\nplay: interrupted\n", 0xE);
+                    should_stop = true;
+                }
             }
             
             // Skip rest of line if comment
@@ -681,7 +689,9 @@ void cmd_play(char *filename) {
         }
     }
     
-    print("play: done\n", 0xA);
+    if (!should_stop) {
+        print("play: done\n", 0xA);
+    }
 }
 
 void cmd_touch(char *filename) {
@@ -1083,12 +1093,6 @@ int main(void) {
             continue;  // Skip command execution and show prompt again
         }
         
-        parse_input(input_buffer, &cmd);
-        execute_command(&cmd);
-        
-        // Update mouse selection after command output is printed
-        // This allows user to select text that was just printed
-        update_mouse_selection();
         // check pipe
         char *pipe_pos = (char *)0;
         for (uint32_t i = 0; input_buffer[i] != '\0'; i++) {
@@ -1123,6 +1127,10 @@ int main(void) {
             parse_input(input_buffer, &cmd);
             execute_command(&cmd);
         }
+        
+        // Update mouse selection after command output is printed
+        // This allows user to select text that was just printed
+        update_mouse_selection();
     }
     
     return 0;
