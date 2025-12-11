@@ -128,13 +128,34 @@ void kernel_setup(void) {
     gdt_install_tss();
     set_tss_register();
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
-    // Write shell into memory
+    uint32_t root_inode = 2;
+    
+    struct EXT2DriverRequest dir_req = {
+        .buf            = (void *)0,
+        .name           = "docs",
+        .parent_inode   = root_inode,
+        .buffer_size    = 0,
+        .name_len       = 4,
+        .is_directory   = true
+    };
+    write(&dir_req);
+
+    char *readme_content = "Welkam to MentOS!\nThis is a simple operating system.\nYou can use: ls, cat, grep, find, touch\nTry: cat testfile.txt\nOr: cat testfile.txt | grep line\n";
+    struct EXT2DriverRequest readme_req = {
+        .buf            = (uint8_t *)readme_content,
+        .name           = "readme.txt",
+        .parent_inode   = root_inode,
+        .buffer_size    = 152,
+        .name_len       = 10,
+        .is_directory   = false
+    };
+    write(&readme_req);
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
         .name                  = "shell",
-        .parent_inode                 = 2,
+        .parent_inode          = 2,
         .buffer_size           = 0x100000,
-        .name_len              = 5,
+        .name_len              = 5
     };
     read(request);
     // Set TSS.esp0 for interprivilege interrupt
