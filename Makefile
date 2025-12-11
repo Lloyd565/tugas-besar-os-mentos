@@ -124,7 +124,11 @@ insert-badapple: inserter
 	@echo Inserting badapplebit file into root directory...
 	@cd $(OUTPUT_FOLDER) && cp ../other/badapplebit . && ./inserter badapplebit 2 $(DISK_NAME).bin && rm badapplebit
 
+insert-music: inserter
+	@echo Inserting music.txt file into root directory...
+	@cd $(OUTPUT_FOLDER) && cp ../other/music.txt . && ./inserter music.txt 2 $(DISK_NAME).bin && rm music.txt
+
 .PHONY: all
 
-all: clean disk insert-shell insert-badapple build run
+all: clean disk insert-shell insert-badapple insert-music build run
 	@echo "=== SELESAI SEMUA TASK ==="

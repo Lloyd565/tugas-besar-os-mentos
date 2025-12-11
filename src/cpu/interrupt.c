@@ -185,32 +185,6 @@ void syscall(struct InterruptFrame frame) {
             clear_screen();
             break;
         }
-        case 11: // get_resolved_path
-        {
-            struct EXT2DriverRequest *req = (struct EXT2DriverRequest *)frame.cpu.general.ebx;
-            char *result_path = (char *)frame.cpu.general.ecx;
-            int8_t *retcode_ptr = (int8_t *)frame.cpu.general.edx;
-            
-            int8_t retcode = get_resolved_path(*req, result_path);
-            *retcode_ptr = retcode;
-            break;
-        }
-        case 17: // draw frame - syscall(17, (uint32_t)frame_buffer, width, height)
-        {
-            char *frame_buffer = (char *)frame.cpu.general.ebx;
-            uint32_t width = frame.cpu.general.ecx;
-            uint32_t height = frame.cpu.general.edx;
-            
-            // Draw the frame to screen
-            for (uint32_t y = 0; y < height; y++) {
-                for (uint32_t x = 0; x < width; x++) {
-                    uint32_t idx = y * width + x;
-                    char c = frame_buffer[idx];
-                    framebuffer_write((uint8_t)y, (uint8_t)x, c, c == '#' ? 0xF : 0x0, 0x0);
-                }
-            }
-            break;
-        }
         case 11: // speaker_beep syscall
         {
             uint16_t frequency = (uint16_t) frame.cpu.general.ebx;
@@ -259,10 +233,20 @@ void syscall(struct InterruptFrame frame) {
             }
             break;
         }
-        case 17: // is_ctrl_pressed syscall
+        case 17: // draw frame - syscall(17, (uint32_t)frame_buffer, width, height)
         {
-            bool result = is_ctrl_pressed();
-            *((bool*)frame.cpu.general.ebx) = result;
+            char *frame_buffer = (char *)frame.cpu.general.ebx;
+            uint32_t width = frame.cpu.general.ecx;
+            uint32_t height = frame.cpu.general.edx;
+            
+            // Draw the frame to screen
+            for (uint32_t y = 0; y < height; y++) {
+                for (uint32_t x = 0; x < width; x++) {
+                    uint32_t idx = y * width + x;
+                    char c = frame_buffer[idx];
+                    framebuffer_write((uint8_t)y, (uint8_t)x, c, c == '#' ? 0xF : 0x0, 0x0);
+                }
+            }
             break;
         }
         case 18: // is_shift_pressed syscall

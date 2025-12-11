@@ -8,6 +8,36 @@
 #define BLOCK_COUNT 2560
 #define INPUT_BUFFER_SIZE 256
 #define MAX_ARGS 8
+#define MAX_LINES 25
+#define MAX_LINE_LENGTH 256
+#define CLIPBOARD_SIZE 4096
+
+// Forward declarations
+void track_output(char *str, uint32_t len);
+void extract_selected_text(uint32_t start_x, uint32_t start_y, uint32_t end_x, uint32_t end_y);
+
+// Output tracking structures
+struct TextLine {
+    char text[MAX_LINE_LENGTH];
+    uint32_t length;
+};
+
+struct OutputBuffer {
+    struct TextLine lines[MAX_LINES];
+    uint32_t current_row;
+    uint32_t current_col;
+} output_buffer;
+
+struct TextSelection {
+    bool is_active;
+    char selected_text[CLIPBOARD_SIZE];
+    uint32_t selected_length;
+} text_selection;
+
+struct Clipboard {
+    char content[CLIPBOARD_SIZE];
+    uint32_t length;
+} clipboard;
 
 void syscall(uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx) {
     __asm__ volatile("mov %0, %%ebx" : : "r"(ebx));
@@ -161,13 +191,13 @@ void syscall_render_mouse_pointer(uint32_t x, uint32_t y, uint8_t color) {
 
 bool syscall_is_ctrl_pressed(void) {
     bool result = false;
-    syscall(17, (uint32_t)&result, 0, 0);
+    syscall(18, (uint32_t)&result, 0, 0);
     return result;
 }
 
 bool syscall_is_shift_pressed(void) {
     bool result = false;
-    syscall(18, (uint32_t)&result, 0, 0);
+    syscall(19, (uint32_t)&result, 0, 0);
     return result;
 }
 
@@ -175,7 +205,7 @@ bool syscall_is_shift_pressed(void) {
 bool syscall_get_mouse_drag_state(uint32_t *coords) {
     // coords is array: [start_x, start_y, end_x, end_y]
     bool drag_active = false;
-    syscall(19, (uint32_t)&drag_active, (uint32_t)coords, 0);
+    syscall(20, (uint32_t)&drag_active, (uint32_t)coords, 0);
     return drag_active;
 }
 
@@ -1172,6 +1202,12 @@ void execute_command(struct Command *cmd) {
             syscall(10, 0, 0, 0); // Clear screen before playing
 
             for (uint32_t frame_idx = 0; frame_idx < num_frames_in_buffer; frame_idx++) {
+                // Check for Ctrl+C to interrupt animation
+                if (syscall_is_ctrl_c_pressed()) {
+                    print("\nbadapple: interrupted\n", 0xE);
+                    break;
+                }
+                
                 uint32_t current_frame_data_offset = frame_idx * BYTES_PER_FRAME;
 
                 // Convert packed binary to frame of chars
@@ -1188,7 +1224,6 @@ void execute_command(struct Command *cmd) {
                 // Use syscall to draw the frame
                 syscall(17, (uint32_t)frame, FRAME_WIDTH, FRAME_HEIGHT);
 
-                // Sleep between frames (200ms untuk delay lebih lama)
                 syscall(9, 1000, 0, 0);
             }
             syscall(10, 0, 0, 0); // Clear screen after playing
@@ -1262,6 +1297,15 @@ void read_line(char *buffer, uint32_t max_len) {
     char c;
     
     while (true) {
+        // Check for Ctrl+C first (before trying to get char)
+        if (syscall_is_ctrl_c_pressed()) {
+            syscall_putchar('^', 0xF);
+            syscall_putchar('C', 0xF);
+            syscall_putchar('\n', 0xF);
+            buffer[0] = '\0';
+            return;
+        }
+        
         // Try to get character non-blocking
         c = syscall_getchar_nonblocking();
         
@@ -1275,7 +1319,7 @@ void read_line(char *buffer, uint32_t max_len) {
             continue;
         }
         
-        // Check for Ctrl+C (ASCII 3)
+        // Check for Ctrl+C (ASCII 3) - backup check
         if (c == 0x03) {
             syscall_putchar('^', 0xF);
             syscall_putchar('C', 0xF);

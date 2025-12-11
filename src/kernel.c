@@ -24,8 +24,9 @@ void kernel_setup(void) {
     gdt_install_tss();
     set_tss_register();
     paging_allocate_user_page_frame(&_paging_kernel_page_directory, (uint8_t*) 0);
-    uint32_t root_inode = 2;
     
+    // Commented out - user will create files manually
+    /*
     struct EXT2DriverRequest dir_req = {
         .buf            = (void *)0,
         .name           = "docs",
@@ -46,6 +47,7 @@ void kernel_setup(void) {
         .is_directory   = false
     };
     write(&readme_req);
+    */
     struct EXT2DriverRequest request = {
         .buf                   = (uint8_t*) 0,
         .name                  = "shell",
