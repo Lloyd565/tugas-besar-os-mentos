@@ -4,7 +4,7 @@
 #include "header/stdlib/string.h"
 #include "header/text/framebuffer.h"
 
-#define BLOCK_COUNT 16
+#define BLOCK_COUNT 2560
 #define INPUT_BUFFER_SIZE 256
 #define MAX_ARGS 8
 
@@ -893,6 +893,60 @@ void execute_command(struct Command *cmd) {
         cmd_grep(cmd->args[0], cmd->args[1]);
     } else if (strcmp(cmd->cmd, "find") == 0) {
         cmd_find(cmd->args[0]);
+    } else if (strcmp(cmd->cmd, "badapple") == 0) {
+        #define SIZE 1261824
+        #define FRAME_WIDTH 64
+        #define FRAME_HEIGHT 24
+        #define BYTES_PER_FRAME (FRAME_WIDTH * FRAME_HEIGHT / 8)
+
+        struct BlockBuffer buf[BLOCK_COUNT];
+        struct EXT2DriverRequest request = {
+            .buf = buf,
+            .name = "badapplebit",
+            .parent_inode = shell_state.current_dir_inode,
+            .buffer_size = BLOCK_SIZE * BLOCK_COUNT,
+            .name_len = 11,
+            .is_directory = false
+        };
+
+        int8_t retcode;
+        syscall_read(&request, &retcode);
+
+        if (retcode != 0) {
+            print("badapple: failed to load badapplebit file\n", 0xC);
+        } else {
+            char *buffer = (char *)buf;
+            char frame[FRAME_HEIGHT * FRAME_WIDTH] = {0};
+            uint32_t num_frames_in_buffer = SIZE / BYTES_PER_FRAME;
+
+            syscall(10, 0, 0, 0); // Clear screen before playing
+
+            for (uint32_t frame_idx = 0; frame_idx < num_frames_in_buffer; frame_idx++) {
+                uint32_t current_frame_data_offset = frame_idx * BYTES_PER_FRAME;
+
+                // Convert packed binary to frame of chars
+                for (uint32_t j = 0; j < BYTES_PER_FRAME; j++) {
+                    char current_packed_byte = buffer[current_frame_data_offset + j];
+                    for (uint32_t k = 0; k < 8; k++) {
+                        uint32_t char_array_pos = j * 8 + k;
+                        if (char_array_pos < (FRAME_HEIGHT * FRAME_WIDTH)) {
+                            frame[char_array_pos] = (current_packed_byte & (1 << (7 - k))) ? '#' : ' ';
+                        }
+                    }
+                }
+
+                // Use syscall to draw the frame
+                syscall(17, (uint32_t)frame, FRAME_WIDTH, FRAME_HEIGHT);
+
+                // Sleep between frames (200ms untuk delay lebih lama)
+                syscall(9, 1000, 0, 0);
+            }
+            syscall(10, 0, 0, 0); // Clear screen after playing
+        }
+        #undef SIZE
+        #undef FRAME_WIDTH
+        #undef FRAME_HEIGHT
+        #undef BYTES_PER_FRAME
     } else if (strcmp(cmd->cmd, "clear") == 0) {
         // Clear screen
         syscall(10,0,0,0);
@@ -911,6 +965,7 @@ void execute_command(struct Command *cmd) {
         print_or_pipe("  grep     - search pattern in file\n", 0xF);
         print_or_pipe("  find     - search for files\n", 0xF);
         print_or_pipe("  clear    - clear screen\n", 0xF);
+        print_or_pipe("  badapple - play bad apple animation\n", 0xF);
         print_or_pipe("  help     - show this help\n", 0xF);
     } else {
         print(cmd->cmd, 0xC);

@@ -149,7 +149,19 @@ void syscall(struct InterruptFrame frame) {
             break;
         }
 
-        case 9: // get_resolved_path
+        case 9: // sleep in milliseconds
+        {
+            uint32_t ms = frame.cpu.general.ebx;
+            // Simple busy-wait (not accurate but works for basic timing)
+            for (volatile uint32_t i = 0; i < ms * 1000; i++);
+            break;
+        }
+        case 10:
+        {
+            clear_screen();
+            break;
+        }
+        case 11: // get_resolved_path
         {
             struct EXT2DriverRequest *req = (struct EXT2DriverRequest *)frame.cpu.general.ebx;
             char *result_path = (char *)frame.cpu.general.ecx;
@@ -159,9 +171,20 @@ void syscall(struct InterruptFrame frame) {
             *retcode_ptr = retcode;
             break;
         }
-        case 10:
+        case 17: // draw frame - syscall(17, (uint32_t)frame_buffer, width, height)
         {
-            clear_screen();
+            char *frame_buffer = (char *)frame.cpu.general.ebx;
+            uint32_t width = frame.cpu.general.ecx;
+            uint32_t height = frame.cpu.general.edx;
+            
+            // Draw the frame to screen
+            for (uint32_t y = 0; y < height; y++) {
+                for (uint32_t x = 0; x < width; x++) {
+                    uint32_t idx = y * width + x;
+                    char c = frame_buffer[idx];
+                    framebuffer_write((uint8_t)y, (uint8_t)x, c, c == '#' ? 0xF : 0x0, 0x0);
+                }
+            }
             break;
         }
     }

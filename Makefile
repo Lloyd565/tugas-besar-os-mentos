@@ -23,7 +23,7 @@ build: iso
 
 disk:
 	@mkdir -p $(OUTPUT_FOLDER)
-	@qemu-img create -f raw $(OUTPUT_FOLDER)/$(DISK_NAME).bin 4M
+	@qemu-img create -f raw $(OUTPUT_FOLDER)/$(DISK_NAME).bin 50M
 
 run: iso
 	@echo "Running OS in QEMU..."
@@ -107,7 +107,11 @@ insert-shell: inserter user-shell
 	@echo Inserting shell into root directory... 
 	@cd $(OUTPUT_FOLDER); ./inserter shell 2 $(DISK_NAME).bin
 
+insert-badapple: inserter
+	@echo Inserting badapplebit file into root directory...
+	@cd $(OUTPUT_FOLDER) && cp ../other/badapplebit . && ./inserter badapplebit 2 $(DISK_NAME).bin && rm badapplebit
+
 .PHONY: all
 
-all: clean disk insert-shell build run
+all: clean disk insert-shell insert-badapple build run
 	@echo "=== SELESAI SEMUA TASK ==="

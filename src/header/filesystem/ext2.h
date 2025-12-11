@@ -9,8 +9,8 @@
 
 
 /* --  File System constants -- */
+#define DISK_SPACE 52428800u                   // 50MB disk space
 #define BOOT_SECTOR 0                         // legacy from FAT32 filesystem IF2130 OS
-#define DISK_SPACE 4194304u                   // 4MB disk space (because our disk or storage.bin is 4MB)
 #define EXT2_SUPER_MAGIC 0xEF53               // this indicating that the filesystem used by OS is ext2
 #define INODE_SIZE sizeof(struct EXT2Inode)   // size of inode
 #define INODES_PER_TABLE (BLOCK_SIZE / INODE_SIZE) // number of inode per block
