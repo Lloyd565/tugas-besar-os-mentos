@@ -289,6 +289,7 @@ struct Command {
     char cmd[32];
     char args[MAX_ARGS][64];
     uint8_t argc;
+    char raw[INPUT_BUFFER_SIZE];
 };
 
 // Pipeline support
@@ -325,6 +326,12 @@ void putchar_or_pipe(char c, uint8_t color) {
 // Parse input into command and arguments
 void parse_input(char *input, struct Command *cmd) {
     memset(cmd, 0, sizeof(struct Command));
+    // Keep a copy of the original raw input for commands that need the rest
+    // (e.g., `touch filename content with spaces`).
+    for (uint32_t ri = 0; ri < INPUT_BUFFER_SIZE - 1 && input[ri] != '\0'; ri++) {
+        cmd->raw[ri] = input[ri];
+    }
+    cmd->raw[INPUT_BUFFER_SIZE - 1] = '\0';
     
     uint8_t i = 0;
     uint8_t arg_idx = 0;
@@ -1010,45 +1017,112 @@ void cmd_play(char *filename) {
     print("play: done\n", 0xA);
 }
 
-void cmd_touch(char *filename) {
+void cmd_touch(char *filename, char *raw_input) {
     if (filename[0] == '\0') {
         print("touch: missing operand\n", 0xC);
         return;
     }
-    
+
     // Remove trailing slash if present
     uint32_t len = strlen(filename);
     if (len > 0 && filename[len - 1] == '/') {
         filename[len - 1] = '\0';
         len--;
     }
-    
-    // Create empty file buffer
-    struct BlockBuffer buf;
+
+    // Determine content (everything after the filename in raw_input)
+    char *content = (char *)0;
+    if (raw_input && raw_input[0] != '\0') {
+        char *p = raw_input;
+        // Skip command token
+        while (*p && *p != ' ') p++;
+        // Skip spaces to filename
+        while (*p == ' ') p++;
+        // Skip filename
+        while (*p && *p != ' ') p++;
+        // Skip spaces to content
+        while (*p == ' ') p++;
+        if (*p != '\0') content = p;
+    }
+
+    if (!content) {
+        // Create empty file (same behavior as before)
+        struct BlockBuffer buf;
+        memset(&buf, 0, sizeof(buf));
+
+        struct EXT2DriverRequest req = {
+            .buf = &buf,
+            .name = filename,
+            .name_len = strlen(filename),
+            .parent_inode = shell_state.current_dir_inode,
+            .buffer_size = 0,  // Empty file
+            .is_directory = false
+        };
+
+        int8_t retcode;
+        syscall_write(&req, &retcode);
+
+        if (retcode == 0) {
+            print("touch: ", 0xA);
+            print(filename, 0xA);
+            print(" created\n", 0xA);
+        } else if (retcode == 1) {
+            print("touch: file already exists\n", 0xC);
+        } else if (retcode == 2) {
+            print("touch: invalid parent directory\n", 0xC);
+        } else {
+            print("touch: unknown error\n", 0xC);
+        }
+
+        return;
+    }
+
+    // Write content to file. Use up to BLOCK_COUNT blocks and truncate if too large.
+    struct BlockBuffer buf[BLOCK_COUNT];
     memset(&buf, 0, sizeof(buf));
-    
+
+    // Copy content into blocks
+    uint32_t max_bytes = BLOCK_SIZE * BLOCK_COUNT;
+    uint32_t content_len = 0;
+    while (content[content_len] != '\0' && content_len < max_bytes) content_len++;
+    char *dst = (char *)buf;
+    for (uint32_t i = 0; i < content_len; i++) dst[i] = content[i];
+
     struct EXT2DriverRequest req = {
-        .buf = &buf,
+        .buf = buf,
         .name = filename,
         .name_len = strlen(filename),
         .parent_inode = shell_state.current_dir_inode,
-        .buffer_size = 0,  // Empty file
+        .buffer_size = content_len,
         .is_directory = false
     };
-    
+
     int8_t retcode;
     syscall_write(&req, &retcode);
-    
+
+    // If file already exists (retcode == 1), delete and retry
+    if (retcode == 1) {
+        struct EXT2DriverRequest del_req = {
+            .name = filename,
+            .name_len = strlen(filename),
+            .parent_inode = shell_state.current_dir_inode,
+            .is_directory = false
+        };
+        int8_t del_retcode;
+        syscall_delete(&del_req, &del_retcode);
+
+        // Retry write after deletion
+        syscall_write(&req, &retcode);
+    }
+
     if (retcode == 0) {
         print("touch: ", 0xA);
         print(filename, 0xA);
         print(" created\n", 0xA);
-    } else if (retcode == 1) {
-        print("touch: file already exists\n", 0xC);
     } else if (retcode == 2) {
         print("touch: invalid parent directory\n", 0xC);
     } else {
-        print("touch: unknown error\n", 0xC);
+        print("touch: error writing file\n", 0xC);
     }
 }
 
@@ -1366,7 +1440,7 @@ void execute_command(struct Command *cmd) {
     } else if (strcmp(cmd->cmd, "echo") == 0) {
         cmd_echo(cmd->args[0]);
     } else if (strcmp(cmd->cmd, "touch") == 0) {
-        cmd_touch(cmd->args[0]);
+        cmd_touch(cmd->args[0], cmd->raw);
     } else if (strcmp(cmd->cmd, "grep") == 0) {
         cmd_grep(cmd->args[0], cmd->args[1]);
     } else if (strcmp(cmd->cmd, "find") == 0) {
