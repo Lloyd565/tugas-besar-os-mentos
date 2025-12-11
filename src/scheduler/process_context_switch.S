@@ -9,9 +9,9 @@ process_context_switch:
     
     ; STEP 2 : iret tech
     push 0x23 ; Stack segment selector (GDT_USER_DATA_SELECTOR), user privilege
-    mov  eax, [ecx + 0xc] ; esp
+    mov  eax, [ecx + 0x34] ; esp
     push eax
-    mov  eax, [ecx + 0x34] ; eflags
+    mov  eax, [ecx + 0x38] ; eflags
     push eax
     mov  eax, 0x18 | 0x3 ; Code Segment
     push eax ; Code segment selector (GDT_USER_CODE_SELECTOR), user privilege

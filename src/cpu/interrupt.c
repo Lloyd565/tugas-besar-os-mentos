@@ -6,6 +6,7 @@
 #include "header/text/framebuffer.h"
 #include "header/stdlib/string.h"
 #include "header/scheduler/scheduler.h"
+#include "header/process/process.h"
 struct TSSEntry _interrupt_tss_entry = {
     .ss0  = GDT_KERNEL_DATA_SEGMENT_SELECTOR,
 };
@@ -48,8 +49,8 @@ void pic_remap(void) {
 void main_interrupt_handler(struct InterruptFrame frame) {
     switch (frame.int_number) {
         case PIC1_OFFSET + IRQ_TIMER:
-            pic_ack(PIC1_OFFSET + IRQ_TIMER);
-            // timer_isr(frame);
+            pic_ack(IRQ_TIMER);
+            timer_isr(frame);
             // scheduler_switch_to_next_process();
             break;
         case 14:
@@ -206,19 +207,24 @@ void activate_timer_interrupt(void) {
 
 void timer_isr(struct InterruptFrame frame){
     // get context to save
-    struct Context ctx = {
-        .cpu = frame.cpu,
-        // .cpu.stack.esp = frame.cpu.stack.esp,
-        .eip = frame.int_stack.eip,
-        .eflags = frame.int_stack.eflags,
-        .page_directory_virtual_addr = paging_get_current_page_directory_addr()
-    };
-    // framebuffer_write_string(5, 0, "context saved", 0, 0);
-    //save context, schedule for next process
-    // __asm__ volatile("cli");
-    scheduler_save_context_to_current_running_pcb(ctx);
-    scheduler_switch_to_next_process();
+    struct ProcessControlBlock *curr_pcb = process_get_current_running_pcb_pointer();
+    // cek curr_pcb lagi running, dan cek kalau frame lagi user mode atau ngga ((frame.int_stack.cs & 0x3) == 0x3) = ngecek user mode)
+    if (curr_pcb->metadata.state == RUNNING && (frame.int_stack.cs & 0x3) == 0x3){
+        struct Context ctx = {
+            .cpu = frame.cpu,
+            // .cpu.stack.esp = frame.cpu.stack.esp,
+            .eip = frame.int_stack.eip,
+            .eflags = frame.int_stack.eflags,
+            .esp = frame.cpu.stack.esp,//*((uint32_t*) &frame.int_stack + 4),
+            .page_directory_virtual_addr = paging_get_current_page_directory_addr()
+        };
+        // framebuffer_write_string(5, 0, "context saved", 0, 0);
+        //save context, schedule for next process
+        // __asm__ volatile("cli");
+        scheduler_save_context_to_current_running_pcb(ctx);
+        scheduler_switch_to_next_process();
     // framebuffer_write_string(6, 0, "scheduled next process", 0, 0);
+    }
 }
 
 

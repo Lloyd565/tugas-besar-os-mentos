@@ -9,7 +9,7 @@ struct ProcessState process_manager_state = {0};
 
 struct ProcessControlBlock* process_get_current_running_pcb_pointer(void){
     for (int i = 0; i< PROCESS_COUNT_MAX; i++){
-        if (_process_list[i].metadata.state == RUNNING) return &(_process_list[i]);
+        if (_process_list[i].metadata.state == RUNNING) {return &(_process_list[i]); }
     }
     return NULL;
 }
@@ -73,13 +73,6 @@ int32_t process_create_user_process(struct EXT2DriverRequest request) {
     }
 
     new_pcb->context.page_directory_virtual_addr = paging_create_new_page_directory();
-    
-    // FIX: Validate page_directory allocation success
-    if (new_pcb->context.page_directory_virtual_addr == NULL) {
-        retcode = PROCESS_CREATE_FAIL_NOT_ENOUGH_MEMORY;
-        goto exit_cleanup;
-    }
-    
     // allocate user page frame
 
     paging_allocate_user_page_frame(new_pcb->context.page_directory_virtual_addr, (uint8_t *) 0);
@@ -99,6 +92,7 @@ int32_t process_create_user_process(struct EXT2DriverRequest request) {
     
     // prepare state and context
     new_pcb->context.eip = 0;
+    new_pcb->context.esp = 0xBFFFFFFC;
     new_pcb->context.cpu = (struct CPURegister) {0};
     new_pcb->context.cpu.stack.ebp = 0xBFFFFFFC;
     new_pcb->context.cpu.stack.esp = 0xBFFFFFFC;
@@ -110,14 +104,12 @@ int32_t process_create_user_process(struct EXT2DriverRequest request) {
     new_pcb->metadata.pid = process_generate_new_pid();
     new_pcb->metadata.state = READY;
     new_pcb->metadata.is_active = true;  // FIX: Set is_active immediately
-    
     // FIX for Issue #4: Validate critical fields
     if (new_pcb->context.page_directory_virtual_addr == NULL) {
         retcode = PROCESS_CREATE_FAIL_NOT_ENOUGH_MEMORY;
         goto exit_cleanup;
     }
     // Note: EIP=0 is valid as it's the entry point in user virtual space
-    
     memcpy(new_pcb->metadata.name, name_buf, request.name_len);
     new_pcb->metadata.name[request.name_len] = '\0';
     process_manager_state.active_process_count++;
