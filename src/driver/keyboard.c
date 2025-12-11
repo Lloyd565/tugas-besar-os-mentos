@@ -46,6 +46,8 @@ struct KeyboardDriverState keyboard_state = {
     .keyboard_input_on = false,
     .keyboard_buffer = '\0',
     .shift_pressed = false,
+    .ctrl_pressed = false,
+    .ctrl_c_pressed = false,
 };
 
 void keyboard_state_activate() {
@@ -62,6 +64,20 @@ void get_keyboard_buffer(char *buf) {
 }
 
 bool is_shift_presseed(void) {
+    return keyboard_state.shift_pressed;
+}
+
+bool is_ctrl_c_pressed(void) {
+    bool result = keyboard_state.ctrl_c_pressed;
+    keyboard_state.ctrl_c_pressed = false;  // Clear the flag after reading
+    return result;
+}
+
+bool is_ctrl_pressed(void) {
+    return keyboard_state.ctrl_pressed;
+}
+
+bool is_shift_pressed(void) {
     return keyboard_state.shift_pressed;
 }
 
@@ -89,24 +105,36 @@ void keyboard_isr(void) {
                         case EXT_SCANCODE_RIGHT:
                             keyboard_state.keyboard_buffer = KEY_RIGHT;
                             break;
+                        case SCANCODE_RCTRL:
+                            keyboard_state.ctrl_pressed = true;
+                            break;
                     }
+                } else if (key == SCANCODE_RCTRL) {
+                    keyboard_state.ctrl_pressed = false;
                 }
                 keyboard_state.read_extended_mode = false;
             } else {
                 if (key == SCANCODE_LSHIFT || key == SCANCODE_RSHIFT) {
                     keyboard_state.shift_pressed = !is_break;
+                } else if (key == SCANCODE_LCTRL) {
+                    keyboard_state.ctrl_pressed = !is_break;
                 } else if (!is_break) {
-                    char ascii_char;
-                    if (keyboard_state.shift_pressed) {
-                        ascii_char = keyboard_scancode_1_to_ascii_map_shifted[key];
+                    // Check for Ctrl+C - tapi HANYA jika tidak ada Shift (untuk memungkinkan Ctrl+Shift+C)
+                    if (keyboard_state.ctrl_pressed && !keyboard_state.shift_pressed && key == SCANCODE_C) {
+                        keyboard_state.ctrl_c_pressed = true;
                     } else {
-                        ascii_char = keyboard_scancode_1_to_ascii_map[key];
-                    }
-                    
-                    if (ascii_char != '\0') {
-                        __asm__ volatile("" ::: "memory");
-                        keyboard_state.keyboard_buffer = ascii_char;
-                        __asm__ volatile("" ::: "memory");
+                        char ascii_char;
+                        if (keyboard_state.shift_pressed) {
+                            ascii_char = keyboard_scancode_1_to_ascii_map_shifted[key];
+                        } else {
+                            ascii_char = keyboard_scancode_1_to_ascii_map[key];
+                        }
+                        
+                        if (ascii_char != '\0') {
+                            __asm__ volatile("" ::: "memory");
+                            keyboard_state.keyboard_buffer = ascii_char;
+                            __asm__ volatile("" ::: "memory");
+                        }
                     }
                 }
             }
