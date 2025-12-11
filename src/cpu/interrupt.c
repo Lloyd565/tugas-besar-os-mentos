@@ -135,16 +135,11 @@ void syscall(struct InterruptFrame frame) {
                 *(struct EXT2DriverRequest*) frame.cpu.general.ebx
             );
             break;
-        case 4: { // getchar - BLOCKING version
-            // Busy-wait sampai ada input
-            while (keyboard_state.keyboard_buffer == '\0') {
-                // Yield CPU - enable interrupt sebentar
-                __asm__ volatile("sti; hlt");
-            }
-            
-            // Ambil karakter
+        case 4: { // getchar - NON-BLOCKING version
             *((char*)frame.cpu.general.ebx) = keyboard_state.keyboard_buffer;
-            keyboard_state.keyboard_buffer = '\0';
+            if (keyboard_state.keyboard_buffer != '\0') {
+                keyboard_state.keyboard_buffer = '\0';
+            }
             break;
         }
         case 5:

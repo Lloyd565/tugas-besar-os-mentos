@@ -36,11 +36,9 @@ void int_to_str(int n, char *buf) {
     if (n < 10) {
         buf[0] = '0';
         buf[1] = n + '0';
-        buf[2] = '\0';
     } else {
         buf[0] = (n / 10) + '0';
         buf[1] = (n % 10) + '0';
-        buf[2] = '\0';
     }
 }
 

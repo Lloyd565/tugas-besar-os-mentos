@@ -428,9 +428,9 @@ int8_t get_inode(struct EXT2DriverRequest request, uint32_t *result_inode)
         return 1; // Not found
     }
     
-    if (entry->file_type != EXT2_FT_DIR) {
-        return 2; // Not a directory
-    }
+    // if (entry->file_type != EXT2_FT_DIR) {
+    //     return 1; // Not a directory
+    // }
     
     *result_inode = entry->inode;
     return 0;

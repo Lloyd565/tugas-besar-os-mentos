@@ -51,7 +51,11 @@ void syscall_delete(struct EXT2DriverRequest *request, int8_t *retcode) {
 }
 
 void syscall_getchar(char *buf) {
-    syscall(4, (uint32_t)buf, 0, 0);
+    char c = 0;
+    while (c == 0) {
+        syscall(4, (uint32_t)&c, 0, 0);
+    }
+    *buf = c;
 }
 
 void syscall_putchar(char c, uint8_t color) {
@@ -84,6 +88,11 @@ void syscall_exec(struct EXT2DriverRequest *request, int8_t *retcode) {
 
 void syscall_get_process_info(uint32_t index, struct ProcessInfo *pcb) {
     syscall(13, index, (uint32_t)pcb, 0);
+}
+
+void syscall_puts_at(char *str, uint32_t len, uint8_t color, uint8_t row, uint8_t col) {
+    uint32_t combined = color | (row << 8) | (col << 16);
+    syscall(15, (uint32_t)str, len, combined);
 }
 
 // Shell state
@@ -255,6 +264,23 @@ void cmd_cd(char *dirname) {
     
     if (retcode != 0) {
         print("cd: directory not found\n", 0xC);
+        return;
+    }
+
+    struct BlockBuffer check_buf;
+    struct EXT2DriverRequest check_req = {
+        .buf = &check_buf,
+        .name = "",
+        .name_len = 0,
+        .parent_inode = new_inode,
+        .buffer_size = BLOCK_SIZE
+    };
+    
+    int8_t dir_check;
+    syscall_read_directory(&check_req, &dir_check);
+    
+    if (dir_check != 0) {
+        print("cd: not a directory\n", 0xC);
         return;
     }
     // Step 2: Get resolved path
@@ -565,13 +591,44 @@ void cmd_kill(char *pid_str) {
         }
     }
     
+    // Check process name
+    struct ProcessInfo pcb;
+    bool process_found = false;
+    bool is_shell = false;
+    bool is_clock = false;
+    
+    for (uint32_t i = 0; i < PROCESS_COUNT_MAX; i++) {
+        syscall_get_process_info(i, &pcb);
+        if (pcb.is_active && (int32_t)pcb.pid == pid) {
+            process_found = true;
+            if (strcmp(pcb.name, "shell") == 0) is_shell = true;
+            if (strcmp(pcb.name, "clock") == 0) is_clock = true;
+            break;
+        }
+    }
+    
+    if (!process_found) {
+        print("kill: failed (pid not found)\n", 0xC);
+        return;
+    }
+    
+    if (is_shell) {
+        print("Error: Cannot kill shell\n", 0xC);
+        return;
+    }
+    
     int8_t ret;
     syscall_kill(pid, &ret);
     
     if (ret == 0) {
         print("Process killed\n", 0xA); // Success
+        if (is_clock) {
+            // Clear clock display at Row 24, Col 71, Len 8
+            // 0xF is White
+            syscall_puts_at("        ", 8, 0xF, 24, 71);
+        }
     } else {
-        print("kill: failed (pid not found?)\n", 0xC);
+        print("kill: failed\n", 0xC);
     }
 }
 
@@ -713,7 +770,15 @@ void cmd_find(char *target) {
 }
 
 void cmd_clock() {
-    cmd_exec("bin/clock");
+    struct ProcessInfo pcb;
+    for (uint32_t i = 0; i < PROCESS_COUNT_MAX; i++) {
+        syscall_get_process_info(i, &pcb);
+        if (pcb.is_active && strcmp(pcb.name, "clock") == 0) {
+            print("Error: Clock is already running\n", 0xC);
+            return;
+        }
+    }
+    cmd_exec("clock");
 }
 
 
