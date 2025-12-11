@@ -35,19 +35,8 @@ void kernel_setup(void) {
         .is_directory   = true
     };
     write(&dir_req);
-    
-    char *test_content = "Hello World\nThis is a test file\ngrep should find this line\nAnother line here\nfinal line\n";
-    struct EXT2DriverRequest file_req = {
-        .buf            = (uint8_t *)test_content,
-        .name           = "testfile.txt",
-        .parent_inode   = root_inode,
-        .buffer_size    = 89,  // strlen of test_content
-        .name_len       = 12,
-        .is_directory   = false
-    };
-    write(&file_req);
 
-    char *readme_content = "Welcome to MentOS!\nThis is a simple operating system.\nYou can use: ls, cat, grep, find, touch\nTry: cat testfile.txt\nOr: cat testfile.txt | grep line\n";
+    char *readme_content = "Welkam to MentOS!\nThis is a simple operating system.\nYou can use: ls, cat, grep, find, touch\nTry: cat testfile.txt\nOr: cat testfile.txt | grep line\n";
     struct EXT2DriverRequest readme_req = {
         .buf            = (uint8_t *)readme_content,
         .name           = "readme.txt",
