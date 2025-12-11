@@ -12,7 +12,7 @@ Kelompok: `Mentos`
 | Nama                         | NIM (dummy) |
 |----------------------------- |------------:|
 | Kurt Mikhael Purba           |     13524065 |
-| Nathan E. Marpaung           |     13524065 |
+| Nathan E. Marpaung           |     13524062 |
 | Angelina Andra Alanna        |     13524079 |
 | Richard Samuel Simanullang   |     13524112 |
 
